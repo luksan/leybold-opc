@@ -2,7 +2,7 @@
 
 mod packets;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use binrw::{binrw, io::Cursor, BinRead, BinReaderExt, BinWrite};
 use rhexdump::hexdump;
 
@@ -64,6 +64,28 @@ impl Connection {
         // hex(&buf);
         Cursor::new(buf).read_be().context("Response parse error.")
     }
+
+    fn send_66_ack(&mut self) -> Result<()> {
+        self.stream.write_all(
+            hex_literal::hex!(
+                "66 66 00 01 00 00 00 00  00 00 00 00 00 00 00 00  00 00 00 01 02 00 00 04"
+            )
+            .as_slice(),
+        )?;
+        let mut rbuf = [0; 24];
+        self.stream
+            .read_exact(&mut rbuf)
+            .context("Reading 66 ack response")?;
+        if rbuf
+            != hex_literal::hex!(
+                "66 66 00 00 00 00 00 00  00 00 00 00 00 00 00 19  00 00 00 00 00 00 00 04"
+            )
+            .as_slice()
+        {
+            // bail!("Unexpected 66 ack response {:x?}", rbuf);
+        }
+        Ok(())
+    }
 }
 
 fn query(pkt: &PacketCC) -> Result<PacketCC> {
@@ -77,12 +99,21 @@ fn download_sbd() -> Result<()> {
     conn.send(&query_download_sdb())?;
     let mut r = conn.receive_response::<PayloadSdbDownload>()?;
     println!("{:?}", r);
+    let mut pkt_cnt = 1;
     while r.payload.continues == 1 {
+        conn.send_66_ack()?;
         conn.send(&query_continue_download())?;
         r = conn.receive_response()?;
+        pkt_cnt += 1;
         println!("{:?}", r);
-        break;
+        if pkt_cnt > 1000 {
+            bail!("Received more than 1000 packets.")
+        }
+        if pkt_cnt % 100 == 0 {
+            println!("Pkt cnt {pkt_cnt}.")
+        }
     }
+    conn.send_66_ack()?;
     Ok(())
 }
 
