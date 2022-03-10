@@ -30,49 +30,56 @@ fn query_continue_download() -> PacketCC {
     PacketCC::new(payload)
 }
 
-fn send<P>(pkt: &P, stream: &mut TcpStream) -> Result<()>
-where
-    P: BinWrite,
-    <P as BinWrite>::Args: Default,
-{
-    let mut buf = Vec::with_capacity(0);
-    pkt.write_to(&mut Cursor::new(&mut buf))
-        .context("Writing packet to send buffer.")?;
-    // hex(&buf);
-    stream
-        .write_all(buf.as_slice())
-        .context("Write to TCP stream failed.")
+struct Connection {
+    stream: TcpStream,
 }
 
-fn receive_response<P: Payload>(stream: &mut TcpStream) -> Result<PacketCC<P>> {
-    let mut buf = vec![0; 24];
-    stream.read_exact(buf.as_mut_slice())?;
-    let hdr =
-        PacketCCHeader::read(&mut Cursor::new(&buf)).context("Response header parse error")?;
-    buf.resize(hdr.payload_len as usize + 24, 0);
-    stream.read_exact(&mut buf[24..])?;
-    // hex(&buf);
-    Cursor::new(buf).read_be().context("Response parse error.")
-}
+impl Connection {
+    fn connect() -> Result<Self> {
+        let stream = TcpStream::connect("192.168.1.51:1202").context("Failed to connect to PLC")?;
+        Ok(Self { stream })
+    }
 
-fn connect() -> Result<TcpStream> {
-    TcpStream::connect("192.168.1.51:1202").context("Failed to connect to PLC")
+    fn send<P>(&mut self, pkt: &P) -> Result<()>
+    where
+        P: BinWrite,
+        <P as BinWrite>::Args: Default,
+    {
+        let mut buf = Vec::with_capacity(0);
+        pkt.write_to(&mut Cursor::new(&mut buf))
+            .context("Writing packet to send buffer.")?;
+        // hex(&buf);
+        self.stream
+            .write_all(buf.as_slice())
+            .context("Write to TCP stream failed.")
+    }
+
+    fn receive_response<P: Payload>(&mut self) -> Result<PacketCC<P>> {
+        let mut buf = vec![0; 24];
+        self.stream.read_exact(buf.as_mut_slice())?;
+        let hdr =
+            PacketCCHeader::read(&mut Cursor::new(&buf)).context("Response header parse error")?;
+        buf.resize(hdr.payload_len as usize + 24, 0);
+        self.stream.read_exact(&mut buf[24..])?;
+        // hex(&buf);
+        Cursor::new(buf).read_be().context("Response parse error.")
+    }
 }
 
 fn query(pkt: &PacketCC) -> Result<PacketCC> {
-    let mut stream = TcpStream::connect("192.168.1.51:1202")?;
-    send(pkt, &mut stream)?;
-    receive_response(&mut stream)
+    let mut conn = Connection::connect()?;
+    conn.send(pkt)?;
+    conn.receive_response()
 }
 
 fn download_sbd() -> Result<()> {
-    let stream = &mut connect()?;
-    send(&query_download_sdb(), stream)?;
-    let mut r = receive_response::<PayloadSdbDownload>(stream)?;
+    let mut conn = Connection::connect()?;
+    conn.send(&query_download_sdb())?;
+    let mut r = conn.receive_response::<PayloadSdbDownload>()?;
     println!("{:?}", r);
     while r.payload.continues == 1 {
-        send(&query_continue_download(), stream)?;
-        r = receive_response(stream)?;
+        conn.send(&query_continue_download())?;
+        r = conn.receive_response()?;
         println!("{:?}", r);
         break;
     }
