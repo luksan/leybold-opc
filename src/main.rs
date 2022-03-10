@@ -17,47 +17,17 @@ fn hex<H: Deref<Target = [u8]>>(hex: &H) {
 
 fn query_fw_ver() -> PacketCC<PayloadUnknown> {
     let payload = PayloadUnknown::from([0x11]);
-    PacketCC {
-        hdr: PacketCCHeader {
-            payload_len: payload.len() as u32,
-            u64_8_f: 0,
-            u32_10_13: 1,
-            u16_14_15: 0,
-            b16: 1,
-            b17: 0x23,
-        },
-        payload,
-    }
+    PacketCC::new(payload)
 }
 
 fn query_download_sdb() -> PacketCC {
     let payload = PayloadUnknown::from(b"1\0\0\x0eDOWNLOAD.SDB\0\0");
-    PacketCC {
-        hdr: PacketCCHeader {
-            payload_len: payload.len() as u32,
-            u64_8_f: 0,
-            u32_10_13: 1,
-            u16_14_15: 0,
-            b16: 0x12,
-            b17: 0x23,
-        },
-        payload,
-    }
+    PacketCC::new(payload)
 }
 
 fn query_continue_download() -> PacketCC {
     let payload = PayloadUnknown::from([b'2']); // 0x32
-    PacketCC {
-        hdr: PacketCCHeader {
-            payload_len: payload.len() as u32,
-            u64_8_f: 0,
-            u32_10_13: 1,
-            u16_14_15: 0,
-            b16: 0x01,
-            b17: 0x23,
-        },
-        payload,
-    }
+    PacketCC::new(payload)
 }
 
 fn send<P>(pkt: &P, stream: &mut TcpStream) -> Result<()>

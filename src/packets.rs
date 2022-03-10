@@ -8,12 +8,27 @@ use std::fmt::{Debug, Formatter};
 #[br(big, magic = 0xCCCC0001u32)]
 #[bw(big, magic = 0xCCCC0001u32)]
 pub struct PacketCCHeader {
-    pub payload_len: u32, // total packet len - 24
+    pub u16_zero: u16,
+    pub payload_len: u16, // total packet len - 24
     pub u64_8_f: u64,     // 0?
     pub u32_10_13: u32,   // 0 or 1
-    pub u16_14_15: u16,   // 0
-    pub b16: u8,          // 23 or 27
-    pub b17: u8,          //
+    pub u8_14: u8,        // 0
+    pub len2: u16,        // received len in response, payload_len in command
+    pub b17: u8,          // 0x23 in command, 0x27 in response
+}
+
+impl PacketCCHeader {
+    pub fn new_cmd(len: u16) -> Self {
+        Self {
+            u16_zero: 0,
+            payload_len: len,
+            u64_8_f: 0,
+            u32_10_13: 0,
+            u8_14: 0,
+            len2: len,
+            b17: 0x23,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -28,8 +43,18 @@ where
     pub payload: Payload,
 }
 
+impl<P: Payload> PacketCC<P> {
+    pub fn new(payload: P) -> Self {
+        let len = payload.len() as u16;
+        Self {
+            hdr: PacketCCHeader::new_cmd(len),
+            payload,
+        }
+    }
+}
+
 pub trait Payload: BinRead<Args = (PacketCCHeader,)> + BinWrite<Args = ()> {
-    fn len(&self) -> u32;
+    fn len(&self) -> u16;
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -41,8 +66,8 @@ pub struct PayloadUnknown {
 }
 
 impl Payload for PayloadUnknown {
-    fn len(&self) -> u32 {
-        self.data.len() as u32
+    fn len(&self) -> u16 {
+        self.data.len() as u16
     }
 }
 
@@ -64,8 +89,8 @@ pub struct PayloadSdbDownload {
 }
 
 impl Payload for PayloadSdbDownload {
-    fn len(&self) -> u32 {
-        4 + self.tail.len() as u32
+    fn len(&self) -> u16 {
+        4 + self.tail.len() as u16
     }
 }
 
