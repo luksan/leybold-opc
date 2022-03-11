@@ -1,11 +1,13 @@
 #![allow(dead_code)]
 
 mod packets;
+mod sdb;
 
 use anyhow::{bail, Context, Result};
 use binrw::{binrw, io::Cursor, BinRead, BinReaderExt, BinWrite};
 use rhexdump::hexdump;
 
+use crate::sdb::Entry;
 use packets::{PacketCC, PacketCCHeader, Payload, PayloadSdbDownload, PayloadUnknown};
 use std::io::{Read, Write};
 use std::net::TcpStream;
@@ -119,11 +121,29 @@ fn download_sbd() -> Result<()> {
     Ok(())
 }
 
+fn print_sdb_file() -> Result<()> {
+    let mut file = std::fs::File::open("sdb.dat")?;
+    loop {
+        let e = Entry::read(&mut file)?;
+        match e {
+            Entry::Parameter(ref p) if p.i3 != 0x30062 => {
+                println!("{:?}", e)
+            }
+            _ => {}
+        }
+        if matches!(e, Entry::Tail { .. }) {
+            break;
+        }
+    }
+    Ok(())
+}
 fn main() -> Result<()> {
     // let pkt = query_download_sdb();
     // let pkt = query_fw_ver();
     // let r = query(&pkt)?;
-    let r = download_sbd()?;
-    println!("{:x?}", r);
+    // let r = download_sbd()?;
+    // println!("{:x?}", r);
+
+    print_sdb_file()?;
     Ok(())
 }
