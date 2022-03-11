@@ -84,7 +84,10 @@ impl<T: AsRef<[u8]>> From<T> for PayloadUnknown {
 #[br(big, import(hdr: PacketCCHeader))]
 pub struct PayloadSdbDownload {
     pub continues: u32, // 0 if this is the last packet, 1 otherwise
-    #[br(count = (hdr.payload_len - 4) as usize)]
+    pub sdb_len: u16,
+    #[br(count = sdb_len)]
+    pub sdb_part: Vec<u8>,
+    #[br(count = (hdr.payload_len - 4 - 2 - sdb_len) as usize)]
     pub tail: Vec<u8>,
 }
 
@@ -98,9 +101,10 @@ impl Debug for PayloadSdbDownload {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "PayloadSdbDownload {{\n continues: {},\n{}\n}}",
+            "PayloadSdbDownload {{\n continues: {},\n{}\ntail: {:x?}}}",
             self.continues,
-            hexdump(&self.tail[0..100])
+            hexdump(&self.sdb_part[0..100]),
+            &self.tail,
         )
     }
 }

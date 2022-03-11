@@ -96,22 +96,24 @@ fn query(pkt: &PacketCC) -> Result<PacketCC> {
 
 fn download_sbd() -> Result<()> {
     let mut conn = Connection::connect()?;
+    let mut sdb_file = std::fs::File::create("sdb_new.dat")?;
+    let mut pkt_cnt = 0;
     conn.send(&query_download_sdb())?;
-    let mut r = conn.receive_response::<PayloadSdbDownload>()?;
-    println!("{:?}", r);
-    let mut pkt_cnt = 1;
-    while r.payload.continues == 1 {
-        conn.send_66_ack()?;
-        conn.send(&query_continue_download())?;
-        r = conn.receive_response()?;
+    loop {
+        let r = conn.receive_response::<PayloadSdbDownload>()?;
+        sdb_file.write_all(r.payload.sdb_part.as_slice())?;
+
         pkt_cnt += 1;
-        println!("{:?}", r);
+        conn.send_66_ack()?;
+
         if pkt_cnt > 1000 {
             bail!("Received more than 1000 packets.")
         }
-        if pkt_cnt % 100 == 0 {
-            println!("Pkt cnt {pkt_cnt}.")
+        println!("Pkt cnt {pkt_cnt} / 838.");
+        if r.payload.continues != 1 {
+            break;
         }
+        conn.send(&query_continue_download())?;
     }
     conn.send_66_ack()?;
     Ok(())
