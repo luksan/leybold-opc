@@ -140,7 +140,8 @@ pub struct QueryParam {
 #[br(big, import(hdr: PacketCCHeader))]
 pub struct PayloadParamsResponse {
     pub x0: [u8; 2],
-    pub timestamp_ms: u32, // a timestamp with millisecond resolution
+    /// Timestamp, instrument uptime in milliseconds
+    pub timestamp_ms: u32,
     pub one1: u8,
     #[br(align_after = 4)]
     x2: NullString,
@@ -151,6 +152,6 @@ pub struct PayloadParamsResponse {
 
 impl Payload for PayloadParamsResponse {
     fn len(&self) -> u16 {
-        10
+        unimplemented!("Payload len() not implemented.")
     }
 }

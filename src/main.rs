@@ -141,28 +141,30 @@ fn print_sdb_file() -> Result<()> {
 
 fn poll_pressure() -> Result<()> {
     let mut cmd = PacketCC::new(PayloadUnknown::from(hex_literal::hex!(
-        "2e 00 00 00 00 02 00 03
-         00 04 78 7c 00 00 00 15
-         00 03 00 04 78 78 00 00
-         00 04 00 02 53 34"
+         "2e 00 00 00 00 04" // the last byte is the number of parameters in the request
+         "00 03 00 04 78 7c 00 00 00 15" // last byte is byte len of the response
+         "00 03 00 04 78 78 00 00 00 04"
+         "00 03 00 04 78 78 00 00 00 04"
+         "00 03 00 04 78 7c 00 00 01 04"
+         "00 02 53 34"
     )));
     cmd.hdr.one_if_data_poll_maybe = 1;
 
     let mut last_timestamp = 0;
     let mut last_time = std::time::Instant::now();
+    let mut conn = Connection::connect()?;
     loop {
-        let mut conn = Connection::connect()?;
         conn.send(&cmd)?;
         //     let r = conn.receive_response::<PayloadUnknown>()?;
         let r = conn.receive_response::<PayloadParamsResponse>()?;
         let now = std::time::Instant::now();
         println!(
             "time delta {} == {} ms",
-            r.payload.timestamp - last_timestamp,
+            r.payload.timestamp_ms - last_timestamp,
             now.duration_since(last_time).as_secs_f32() * 1000.0
         );
         last_time = now;
-        last_timestamp = r.payload.timestamp;
+        last_timestamp = r.payload.timestamp_ms;
         println!("{:x?}", r.payload);
         conn.send_66_ack()?;
     }
