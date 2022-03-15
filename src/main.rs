@@ -8,9 +8,8 @@ use binrw::{binrw, io::Cursor, BinRead, BinReaderExt, BinWrite};
 use rhexdump::hexdump;
 
 use crate::packets::PayloadParamsResponse;
-use crate::sdb::Entry;
 use packets::{PacketCC, PacketCCHeader, Payload, PayloadSdbDownload, PayloadUnknown};
-use std::io::{Read, Write};
+use std::io::{BufRead, Read, Seek, Write};
 use std::net::TcpStream;
 use std::ops::Deref;
 
@@ -123,17 +122,39 @@ fn download_sbd() -> Result<()> {
 }
 
 fn print_sdb_file() -> Result<()> {
-    let mut file = std::fs::File::open("sdb.dat")?;
+    use sdb::Entry;
+
+    let mut file = std::io::BufReader::new(std::fs::File::open("sdb.dat")?);
+    let mut entries = vec![];
     loop {
-        let e = Entry::read(&mut file)?;
-        match e {
-            Entry::Parameter(ref p) if p.i3 != 0x30062 => {
-                println!("{:?}", e)
+        match Entry::read(&mut file) {
+            Ok(e) => {
+                //    if let Entry::Parameter(e) = e {
+                entries.push(e);
+                //      }
+                if file.fill_buf()?.is_empty() {
+                    break;
+                }
             }
-            _ => {}
+            Err(e) => {
+                let x: i32 = file.read_le()?;
+                Err(e).with_context(|| {
+                    format!("u32 at {:x} {:4}", file.stream_position().unwrap(), x)
+                })?;
+            }
         }
-        if matches!(e, Entry::Tail { .. }) {
-            break;
+    }
+    println!("{} entries in SDB.", entries.len());
+    // entries.sort_by_key(|e| e.value_type);
+    // entries.dedup_by_key(|e| e.value_type);
+
+    for e in entries.iter() {
+        // dbg!(e);
+        if let Entry::Parameter(ref p) = e {
+            if p.value_type == sdb::ValueType::UI1Array {
+                //if p.name.as_str()?.starts_with(".Gauge[1].Parameter[1]") {
+                println!("{:?}", e);
+            }
         }
     }
     Ok(())
@@ -178,7 +199,7 @@ fn main() -> Result<()> {
     // let r = download_sbd()?;
     // println!("{:x?}", r);
 
-    // print_sdb_file()?;
-    poll_pressure()?;
+    print_sdb_file()?;
+    // poll_pressure()?;
     Ok(())
 }

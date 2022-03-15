@@ -137,7 +137,7 @@ pub struct QueryParam {
 
 #[derive(Clone, PartialEq, Debug)]
 #[binrw]
-#[br(big, import(hdr: PacketCCHeader))]
+#[br(big, import(_hdr: PacketCCHeader))]
 pub struct PayloadParamsResponse {
     pub x0: [u8; 2],
     /// Timestamp, instrument uptime in milliseconds
