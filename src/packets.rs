@@ -204,22 +204,21 @@ impl<const N: usize> Param for Bstr<N> {
 #[derive(Clone, Debug)]
 pub struct Params<P>(P);
 
-impl<A: Param, B: Param, C: Param, D: Param> BinRead for Params<(A, B, C, D)> {
-    type Args = ();
-
-    fn read_options<R: Read + Seek>(
-        reader: &mut R,
-        options: &ReadOptions,
-        _args: Self::Args,
-    ) -> BinResult<Self> {
-        Ok(Self((
-            ParamResponse::<A>::read_options(reader, options, ())?.0,
-            ParamResponse::<B>::read_options(reader, options, ())?.0,
-            ParamResponse::<C>::read_options(reader, options, ())?.0,
-            ParamResponse::<D>::read_options(reader, options, ())?.0,
-        )))
-    }
+macro_rules! param_impls {
+    ($end:ident) => {};
+    ( $head:ident, $( $name:ident ),+ ) => {
+        impl<$($name: Param),+> BinRead for Params<($($name,)+)> {
+            type Args = ();
+            fn read_options<R: Read + Seek>(reader: &mut R, options: &ReadOptions, _args: Self::Args)
+              -> BinResult<Self> {
+                Ok(Self(($(ParamResponse::<$name>::read_options(reader, options, ())?.0,)+)))
+            }
+        }
+        param_impls!($($name),+);
+    };
 }
+
+param_impls!(end, A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, S, T);
 
 #[derive(Clone, Debug)]
 pub struct PayloadParamsResponse<PTuple: BinRead<Args = ()> + 'static> {
