@@ -1,7 +1,12 @@
-use crate::binrw;
-use binrw::{BinRead, BinWrite, NullString};
+use anyhow::{Context, Result};
+use binrw::{
+    binread, binrw, BinRead, BinReaderExt, BinResult, BinWrite, ReadOptions, WriteOptions,
+};
 use rhexdump::hexdump;
+
 use std::fmt::{Debug, Formatter};
+use std::io::{Read, Seek, Write};
+use std::time::Duration;
 
 #[derive(Copy, Clone, Debug, PartialEq, Default)]
 #[binrw]
@@ -32,18 +37,44 @@ impl PacketCCHeader {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-#[binrw]
-#[br(big)]
 pub struct PacketCC<Payload = PayloadUnknown>
 where
-    Payload: 'static + BinRead<Args = (PacketCCHeader,)> + BinWrite<Args = ()>,
+    Payload: 'static,
 {
     pub hdr: PacketCCHeader,
-    #[br(args(hdr))]
     pub payload: Payload,
 }
+pub trait ResponsePayload: BinRead<Args = (PacketCCHeader,)> {}
 
-impl<P: Payload> PacketCC<P> {
+impl<P: ResponsePayload> BinRead for PacketCC<P> {
+    type Args = ();
+
+    fn read_options<R: Read + Seek>(
+        reader: &mut R,
+        options: &ReadOptions,
+        _args: Self::Args,
+    ) -> BinResult<Self> {
+        let hdr = PacketCCHeader::read_options(reader, options, ())?;
+        let payload = P::read_options(reader, options, (hdr,))?;
+        Ok(Self { hdr, payload })
+    }
+}
+
+impl<P: SendPayload> BinWrite for PacketCC<P> {
+    type Args = ();
+
+    fn write_options<W: Write + Seek>(
+        &self,
+        writer: &mut W,
+        options: &WriteOptions,
+        _args: Self::Args,
+    ) -> BinResult<()> {
+        self.hdr.write_options(writer, options, ())?;
+        self.payload.write_options(writer, options, ())
+    }
+}
+
+impl<P: SendPayload> PacketCC<P> {
     pub fn new(payload: P) -> Self {
         let len = payload.len() as u16;
         Self {
@@ -53,7 +84,7 @@ impl<P: Payload> PacketCC<P> {
     }
 }
 
-pub trait Payload: BinRead<Args = (PacketCCHeader,)> + BinWrite<Args = ()> {
+pub trait SendPayload: BinWrite<Args = ()> {
     fn len(&self) -> u16;
 }
 
@@ -65,11 +96,13 @@ pub struct PayloadUnknown {
     pub data: Vec<u8>,
 }
 
-impl Payload for PayloadUnknown {
+impl SendPayload for PayloadUnknown {
     fn len(&self) -> u16 {
         self.data.len() as u16
     }
 }
+
+impl ResponsePayload for PayloadUnknown {}
 
 impl<T: AsRef<[u8]>> From<T> for PayloadUnknown {
     fn from(d: T) -> Self {
@@ -91,11 +124,12 @@ pub struct PayloadSdbDownload {
     pub tail: Vec<u8>,
 }
 
-impl Payload for PayloadSdbDownload {
+impl SendPayload for PayloadSdbDownload {
     fn len(&self) -> u16 {
         4 + self.tail.len() as u16
     }
 }
+impl ResponsePayload for PayloadSdbDownload {}
 
 impl Debug for PayloadSdbDownload {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -120,7 +154,7 @@ pub struct PayloadParamsQuery {
     end: u32,
 }
 
-impl Payload for PayloadParamsQuery {
+impl SendPayload for PayloadParamsQuery {
     fn len(&self) -> u16 {
         self.params.len() as u16 * (2 + 4 + 4) + 4 + 4
     }
@@ -135,23 +169,101 @@ pub struct QueryParam {
     i2: u32,
 }
 
-#[derive(Clone, PartialEq, Debug)]
-#[binrw]
-#[br(big, import(_hdr: PacketCCHeader))]
-pub struct PayloadParamsResponse {
-    pub x0: [u8; 2],
-    /// Timestamp, instrument uptime in milliseconds
-    pub timestamp_ms: u32,
-    pub one1: u8,
-    #[br(align_after = 4)]
-    x2: NullString,
-    x3: [u32; 3],
-    one2: u8, // 0x01
-    val: f32,
+pub trait Param: BinRead<Args = ()> {
+    const LEN: usize;
 }
 
-impl Payload for PayloadParamsResponse {
-    fn len(&self) -> u16 {
-        unimplemented!("Payload len() not implemented.")
+impl Param for f32 {
+    const LEN: usize = 4;
+}
+
+#[derive(Clone)]
+#[binread]
+pub struct Bstr<const LEN: usize>(#[br(count = LEN)] Vec<u8>);
+
+impl<const LEN: usize> Bstr<LEN> {
+    pub fn try_as_str(&self) -> Result<&str> {
+        std::str::from_utf8(self.0.as_slice().split(|&c| c == 0).next().unwrap())
+            .context("Bstr is not valid utf-8")
     }
 }
+
+impl<const LEN: usize> Debug for Bstr<LEN> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        if let Ok(s) = self.try_as_str() {
+            write!(f, "{}", s)
+        } else {
+            write!(f, "{:?}", self.0)
+        }
+    }
+}
+impl<const N: usize> Param for Bstr<N> {
+    const LEN: usize = N;
+}
+
+#[derive(Clone, Debug)]
+pub struct Params<P>(P);
+
+impl<A: Param, B: Param, C: Param, D: Param> BinRead for Params<(A, B, C, D)> {
+    type Args = ();
+
+    fn read_options<R: Read + Seek>(
+        reader: &mut R,
+        options: &ReadOptions,
+        _args: Self::Args,
+    ) -> BinResult<Self> {
+        Ok(Self((
+            ParamResponse::<A>::read_options(reader, options, ())?.0,
+            ParamResponse::<B>::read_options(reader, options, ())?.0,
+            ParamResponse::<C>::read_options(reader, options, ())?.0,
+            ParamResponse::<D>::read_options(reader, options, ())?.0,
+        )))
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct PayloadParamsResponse<PTuple: BinRead<Args = ()> + 'static> {
+    pub x0: [u8; 2], // 0 0
+    /// Timestamp, instrument uptime in milliseconds
+    pub timestamp: Duration,
+    params: Params<PTuple>,
+    tail: Vec<u8>,
+}
+
+impl<PTuple: BinRead<Args = ()>> BinRead for PayloadParamsResponse<PTuple>
+where
+    Params<PTuple>: BinRead<Args = ()>,
+{
+    type Args = (PacketCCHeader,);
+
+    fn read_options<R: Read + Seek>(
+        reader: &mut R,
+        options: &ReadOptions,
+        _args: Self::Args,
+    ) -> BinResult<Self> {
+        let x0 = reader.read_type(options.endian())?;
+        let timestamp =
+            u32::read_options(reader, options, ()).map(|d| Duration::from_millis(d as u64))?;
+        let params = reader.read_type(options.endian())?;
+        let mut tail = Vec::new();
+        reader.read_to_end(&mut tail)?;
+        Ok(Self {
+            x0,
+            timestamp,
+            params,
+            tail,
+        })
+    }
+}
+
+impl<PTuple> ResponsePayload for PayloadParamsResponse<PTuple>
+where
+    PTuple: BinRead<Args = ()>,
+    Params<PTuple>: BinRead<Args = ()>,
+{
+}
+
+#[derive(Clone, PartialEq)]
+#[binread]
+#[br(big, magic = 0x01u8)]
+struct ParamResponse<T: Param + 'static>(#[br(pad_size_to = T::LEN)] T);

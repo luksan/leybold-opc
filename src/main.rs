@@ -4,14 +4,18 @@ mod packets;
 mod sdb;
 
 use anyhow::{bail, Context, Result};
-use binrw::{binrw, io::Cursor, BinRead, BinReaderExt, BinWrite};
+use binrw::{io::Cursor, BinRead, BinReaderExt, BinWrite};
 use rhexdump::hexdump;
 
-use crate::packets::PayloadParamsResponse;
-use packets::{PacketCC, PacketCCHeader, Payload, PayloadSdbDownload, PayloadUnknown};
+use packets::{
+    Bstr, PacketCC, PacketCCHeader, PayloadParamsResponse, PayloadSdbDownload, PayloadUnknown,
+    ResponsePayload,
+};
+
 use std::io::{BufRead, Read, Seek, Write};
 use std::net::TcpStream;
 use std::ops::Deref;
+use std::time::Duration;
 
 fn hex<H: Deref<Target = [u8]>>(hex: &H) {
     println!("{}", hexdump(hex.as_ref()));
@@ -56,7 +60,7 @@ impl Connection {
             .context("Write to TCP stream failed.")
     }
 
-    fn receive_response<P: Payload>(&mut self) -> Result<PacketCC<P>> {
+    fn receive_response<P: ResponsePayload>(&mut self) -> Result<PacketCC<P>> {
         let mut buf = vec![0; 24];
         self.stream.read_exact(buf.as_mut_slice())?;
         let hdr =
@@ -171,25 +175,26 @@ fn poll_pressure() -> Result<()> {
     )));
     cmd.hdr.one_if_data_poll_maybe = 1;
 
-    let mut last_timestamp = 0;
+    let mut last_timestamp = 0.0;
     let mut last_time = std::time::Instant::now();
     let mut conn = Connection::connect()?;
+    conn.stream.set_read_timeout(Some(Duration::from_secs(2)))?;
     loop {
         conn.send(&cmd)?;
         //     let r = conn.receive_response::<PayloadUnknown>()?;
-        let r = conn.receive_response::<PayloadParamsResponse>()?;
+        let r =
+            conn.receive_response::<PayloadParamsResponse<(Bstr<0x15>, f32, f32, Bstr<0x04>)>>()?;
         let now = std::time::Instant::now();
         println!(
-            "time delta {} == {} ms",
-            r.payload.timestamp_ms - last_timestamp,
+            "time delta {:.2} == {:.2} ms",
+            (r.payload.timestamp.as_secs_f64() - last_timestamp) * 1000.0,
             now.duration_since(last_time).as_secs_f32() * 1000.0
         );
         last_time = now;
-        last_timestamp = r.payload.timestamp_ms;
+        last_timestamp = r.payload.timestamp.as_secs_f64();
         println!("{:x?}", r.payload);
         conn.send_66_ack()?;
     }
-    Ok(())
 }
 
 fn main() -> Result<()> {
@@ -199,7 +204,7 @@ fn main() -> Result<()> {
     // let r = download_sbd()?;
     // println!("{:x?}", r);
 
-    print_sdb_file()?;
-    // poll_pressure()?;
+    // print_sdb_file()?;
+    poll_pressure()?;
     Ok(())
 }
