@@ -154,6 +154,17 @@ pub struct PayloadParamsQuery {
     end: u32,
 }
 
+impl PayloadParamsQuery {
+    pub fn new(params: &[QueryParam]) -> Self {
+        let params = params.to_vec();
+        Self {
+            param_count: params.len() as u32,
+            params,
+            end: 0x00_02_53_34,
+        }
+    }
+}
+
 impl SendPayload for PayloadParamsQuery {
     fn len(&self) -> u16 {
         self.params.len() as u16 * (2 + 4 + 4) + 4 + 4
@@ -162,11 +173,19 @@ impl SendPayload for PayloadParamsQuery {
 
 #[derive(Clone, PartialEq)]
 #[binrw]
-#[bw(big)]
+#[bw(big, magic = 0x03u16)]
 pub struct QueryParam {
-    i1: u16, // 0x03
     param_id: u32,
-    i2: u32,
+    response_len: u32,
+}
+
+impl QueryParam {
+    pub fn new(param_id: u32, response_len: u32) -> Self {
+        Self {
+            param_id,
+            response_len,
+        }
+    }
 }
 
 pub trait Param: BinRead<Args = ()> {

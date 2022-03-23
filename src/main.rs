@@ -12,6 +12,7 @@ use packets::{
     ResponsePayload,
 };
 
+use crate::packets::{PayloadParamsQuery, QueryParam};
 use std::io::{BufRead, Read, Seek, Write};
 use std::net::TcpStream;
 use std::ops::Deref;
@@ -165,7 +166,7 @@ fn print_sdb_file() -> Result<()> {
 }
 
 fn poll_pressure() -> Result<()> {
-    let mut cmd = PacketCC::new(PayloadUnknown::from(hex_literal::hex!(
+    let mut _cmd = PacketCC::new(PayloadUnknown::from(hex_literal::hex!(
          "2e 00 00 00 00 04" // the last byte is the number of parameters in the request
          "00 03 00 04 78 7c 00 00 00 15" // last byte is byte len of the response
          "00 03 00 04 78 78 00 00 00 04"
@@ -173,6 +174,13 @@ fn poll_pressure() -> Result<()> {
          "00 03 00 04 78 7c 00 00 01 04"
          "00 02 53 34"
     )));
+
+    let mut cmd = PacketCC::new(PayloadParamsQuery::new(&[
+        QueryParam::new(0x4787c, 0x15),
+        QueryParam::new(0x47878, 4),
+        QueryParam::new(0x47878, 4),
+        QueryParam::new(0x4787c, 4),
+    ]));
     cmd.hdr.one_if_data_poll_maybe = 1;
 
     let mut last_timestamp = 0.0;
