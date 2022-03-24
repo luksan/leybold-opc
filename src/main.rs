@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+#![allow(dead_code, unused_mut)]
 
 mod packets;
 mod sdb;
@@ -13,7 +13,7 @@ use packets::{
 };
 
 use crate::packets::{PayloadParamsQuery, QueryParam};
-use std::io::{BufRead, Read, Seek, Write};
+use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::ops::Deref;
 use std::time::Duration;
@@ -126,45 +126,6 @@ fn download_sbd() -> Result<()> {
     Ok(())
 }
 
-fn print_sdb_file() -> Result<()> {
-    use sdb::Entry;
-
-    let mut file = std::io::BufReader::new(std::fs::File::open("sdb.dat")?);
-    let mut entries = vec![];
-    loop {
-        match Entry::read(&mut file) {
-            Ok(e) => {
-                //    if let Entry::Parameter(e) = e {
-                entries.push(e);
-                //      }
-                if file.fill_buf()?.is_empty() {
-                    break;
-                }
-            }
-            Err(e) => {
-                let x: i32 = file.read_le()?;
-                Err(e).with_context(|| {
-                    format!("u32 at {:x} {:4}", file.stream_position().unwrap(), x)
-                })?;
-            }
-        }
-    }
-    println!("{} entries in SDB.", entries.len());
-    // entries.sort_by_key(|e| e.value_type);
-    // entries.dedup_by_key(|e| e.value_type);
-
-    for e in entries.iter() {
-        // dbg!(e);
-        if let Entry::Parameter(ref p) = e {
-            if p.value_type == sdb::ValueType::UI1Array {
-                //if p.name.as_str()?.starts_with(".Gauge[1].Parameter[1]") {
-                println!("{:?}", e);
-            }
-        }
-    }
-    Ok(())
-}
-
 fn poll_pressure() -> Result<()> {
     let mut _cmd = PacketCC::new(PayloadUnknown::from(hex_literal::hex!(
          "2e 00 00 00 00 04" // the last byte is the number of parameters in the request
@@ -212,7 +173,7 @@ fn main() -> Result<()> {
     // let r = download_sbd()?;
     // println!("{:x?}", r);
 
-    // print_sdb_file()?;
-    poll_pressure()?;
+    sdb::x04_analysis()?;
+    //poll_pressure()?;
     Ok(())
 }

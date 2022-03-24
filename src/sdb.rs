@@ -1,29 +1,21 @@
 use anyhow::{Context, Result};
-use binrw::{BinRead, NullString};
+use binrw::{binread, BinRead, BinResult, Error as BinErr, NullString, ReadOptions};
 
+use rhexdump::hexdump;
 use std::fmt::{Debug, Formatter};
+use std::io::{Read, Seek};
 
 #[derive(BinRead, Clone, Debug, PartialEq)]
 #[br(little)]
 pub enum Entry {
-    #[br(magic = 0x01u32)]
-    X01 {
-        len: u32,
-        #[br(count = 40-8)]
-        data: Vec<u8>,
-    },
+    Header(Header),
     #[br(magic = 0x03u32)]
-    X03 { i1: u32, i2: u32, i3: u32 },
-    #[br(magic = 0x04u32)]
-    X04 {
-        len: u32,
+    X03 {
         i1: u32,
         i2: u32,
-        name: SdbStr,
-        #[br(count = len - 4*4 - 2 - name.len as u32)]
-        tail: Vec<u8>,
+        i3: u32,
     },
-    #[br(magic = 0x05u32)]
+    TypeDescr(TypeDescription),
     Parameter(Parameter),
     #[br(magic = 0x06u32)]
     Tail {
@@ -35,12 +27,75 @@ pub enum Entry {
     EndOfHeader,
 }
 
-#[derive(BinRead, Clone, PartialEq)]
+#[binread]
+#[derive(Clone, Debug, PartialEq)]
 #[br(little)]
+pub struct Sdb {
+    hdr: Header,
+    #[br(parse_with = parse_type_descr, args (hdr.type_descr_cnt))]
+    type_descr: Vec<TypeDescription>,
+    #[br(parse_with = parse_entries)]
+    entries: Vec<Entry>,
+}
+
+fn parse_type_descr<Reader: Read + Seek>(
+    reader: &mut Reader,
+    opts: &ReadOptions,
+    args: (u32,),
+) -> BinResult<Vec<TypeDescription>> {
+    let mut vec = Vec::with_capacity(args.0 as usize);
+    for idx in 0..args.0 {
+        vec.push(TypeDescription::read_options(reader, opts, (idx,))?);
+    }
+    Ok(vec)
+}
+
+fn parse_entries<Reader: Read + Seek>(
+    reader: &mut Reader,
+    opts: &ReadOptions,
+    args: (),
+) -> BinResult<Vec<Entry>> {
+    let mut entries = vec![];
+    loop {
+        match Entry::read_options(reader, opts, args) {
+            Ok(e) => entries.push(e),
+            Err(_) => {
+                break;
+            }
+        }
+    }
+    Ok(entries)
+}
+
+#[derive(BinRead, Clone, Debug, PartialEq)]
+#[br(little, magic = 0x01u32)]
+pub struct Header {
+    len: u32,
+    #[br(count = 40 - 8 - 4)]
+    data: Vec<u8>,
+    type_descr_cnt: u32,
+}
+
+#[derive(BinRead, Clone, Debug, PartialEq)]
+#[br(little, magic = 0x04u32, import(idx:u32))]
+pub struct TypeDescription {
+    len: u32,
+    #[br(calc = idx)]
+    value_type: u32,
+    i1: u32,
+    type_size: u32,
+    name: SdbStr,
+    #[br(count = len - 4*4 - 2 - name.len as u32)]
+    tail: Vec<u8>,
+}
+
+#[derive(BinRead, Clone, PartialEq)]
+#[br(little, magic = 0x05u32)]
 pub struct Parameter {
     len: u32,
     pub value_type: ValueType, //ValueType,
-    pub i2: u32,
+    pub i2a: u16,
+    pub i2: u16,
     pub i3: u32,
     pub id: u32,
     pub name: SdbStr,
@@ -51,7 +106,7 @@ pub struct Parameter {
 #[repr(u32)]
 #[allow(non_camel_case_types)]
 pub enum ValueType {
-    x0 = 0x00,
+    Bool = 0x00,
     I16 = 0x01,
     Bstr = 0x02,
     BstrUnit = 0x03,
@@ -76,10 +131,10 @@ pub enum ValueType {
     x22 = 0x16,
     x23 = 0x17,
     x24 = 0x18,
-    x25 = 0x19,
-    x26 = 0x1a,
-    x27 = 0x1b,
-    x28 = 0x1c,
+    ParamGrp = 0x19,
+    GaugeEntry = 0x1a,
+    Gauges = 0x1b,
+    Special = 0x1c,
     x29 = 0x1d,
     x30 = 0x1e,
     x31 = 0x1f,
@@ -103,8 +158,8 @@ impl Debug for Parameter {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{:38?} id: {:05x}, type: {:?}, i2: {:8x}, i3: {:x}",
-            self.name, self.id, self.value_type, self.i2, self.i3
+            "{:38?} id: {:05x}, type: {:?},\t i2a: {:x}, i2: {:x}, i3: {:x}",
+            self.name, self.id, self.value_type, self.i2a, self.i2, self.i3
         )
     }
 }
@@ -134,4 +189,56 @@ impl Debug for SdbStr {
             write!(f, "\"{}\"", s)
         }
     }
+}
+
+pub fn print_sdb_file() -> Result<()> {
+    let sdb = read_sdb_file()?;
+    println!("{} entries in SDB.", sdb.entries.len());
+    // entries.sort_by_key(|e| e.value_type);
+    // entries.dedup_by_key(|e| e.value_type);
+
+    for e in sdb.entries.iter() {
+        // dbg!(e);
+        if let Entry::Parameter(ref p) = e {
+            if p.value_type == ValueType::x9 {
+                //println!("{p:?}");
+            }
+            if p.name.try_as_str()?.starts_with(".Gauge[1].Parameter[1]") {
+                //println!("{p:?}");
+            }
+            if p.i2 != 0 {
+                // println!("{:?}", p);
+            }
+        } else {
+            //   println!("{e:?}")
+        }
+    }
+    Ok(())
+}
+
+pub fn x04_analysis() -> Result<()> {
+    let sdb = read_sdb_file()?;
+
+    let mut x04 = sdb.type_descr.iter().collect::<Vec<_>>();
+
+    // x04.sort_by_key(|x| x.i1);
+    for e in x04.iter() {
+        let idx = e.value_type;
+        let name = e.name.try_as_str()?;
+        let i1 = e.i1;
+        let type_size = e.type_size;
+        let tail_len = e.tail.len();
+        println!(
+            "X04:{idx:2x} i1 {i1:2x}, tlen {type_size:5x}, tail_len: {tail_len:4x}, name {name}",
+        );
+        if idx == 0x19 {
+            println!("{}", hexdump(&e.tail));
+        }
+    }
+    Ok(())
+}
+
+pub fn read_sdb_file() -> Result<Sdb> {
+    let mut file = std::io::BufReader::new(std::fs::File::open("sdb.dat")?);
+    Sdb::read(&mut file).context("Failed to parse SDB file.")
 }
