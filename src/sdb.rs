@@ -29,7 +29,9 @@ pub struct Sdb {
     #[br(temp)]
     type_descr_cnt: u32,
 
-    #[br(parse_with = parse_type_descr, args (type_descr_cnt))]
+    #[br(count = type_descr_cnt, map = |mut vec: Vec<TypeDescription>| {
+        vec.iter_mut().enumerate().for_each(|(idx, t)|t.type_idx = idx as _); vec
+    })]
     type_descr: Vec<TypeDescription>,
 
     #[br(magic = 3u32)]
@@ -41,18 +43,6 @@ pub struct Sdb {
 
     #[br(parse_with = parse_entries)]
     entries: Vec<Entry>,
-}
-
-fn parse_type_descr<Reader: Read + Seek>(
-    reader: &mut Reader,
-    opts: &ReadOptions,
-    args: (u32,),
-) -> BinResult<Vec<TypeDescription>> {
-    let mut vec = Vec::with_capacity(args.0 as usize);
-    for idx in 0..args.0 {
-        vec.push(TypeDescription::read_options(reader, opts, (idx,))?);
-    }
-    Ok(vec)
 }
 
 fn parse_entries<Reader: Read + Seek>(
@@ -74,10 +64,10 @@ fn parse_entries<Reader: Read + Seek>(
 
 #[binread]
 #[derive(Clone, Debug)]
-#[br(little, magic = 0x04u32, import(idx:u32))]
+#[br(little, magic = 0x04u32)]
 pub struct TypeDescription {
-    #[br(calc = idx)]
-    type_idx: u32,
+    #[br(default)]
+    type_idx: u32, // this is set in struct Sdb
     #[br(temp)]
     len: u32,
     i1: u32,
