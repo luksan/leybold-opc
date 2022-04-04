@@ -11,31 +11,25 @@ use std::io::{Cursor, Read, Seek};
 #[derive(BinRead, Clone, Debug)]
 #[br(little)]
 pub enum Entry {
-    Header(Header),
-    #[br(magic = 0x03u32)]
-    X03 {
-        i1: u32,
-        i2: u32,
-        i3: u32,
-    },
-    TypeDescr(TypeDescription),
-    Parameter(Parameter),
     #[br(magic = 0x06u32)]
     Tail {
         len: u32,
         #[br(count = len - 8)]
         data: Vec<u8>,
     },
-    #[br(magic = 0x0Du32)]
-    EndOfHeader,
 }
 
 #[binread]
 #[derive(Clone, Debug)]
 #[br(little)]
 pub struct Sdb {
-    hdr: Header,
-    #[br(parse_with = parse_type_descr, args (hdr.type_descr_cnt))]
+    #[br(magic = 1u32, temp)]
+    hdr_len: u32,
+    hdr_data: [u32; 7],
+    #[br(temp)]
+    type_descr_cnt: u32,
+
+    #[br(parse_with = parse_type_descr, args (type_descr_cnt))]
     type_descr: Vec<TypeDescription>,
 
     #[br(magic = 3u32)]
@@ -78,28 +72,19 @@ fn parse_entries<Reader: Read + Seek>(
     Ok(entries)
 }
 
-#[derive(BinRead, Clone, Debug, PartialEq)]
-#[br(little, magic = 0x01u32)]
-pub struct Header {
-    len: u32,
-    #[br(count = 40 - 8 - 4)]
-    data: Vec<u8>,
-    type_descr_cnt: u32,
-}
-
-#[derive(BinRead, Clone, Debug)]
+#[binread]
+#[derive(Clone, Debug)]
 #[br(little, magic = 0x04u32, import(idx:u32))]
 pub struct TypeDescription {
     #[br(calc = idx)]
     type_idx: u32,
+    #[br(temp)]
     len: u32,
     i1: u32,
     type_size: u32,
     description: SdbStr,
     #[br(args (i1, len - 4*4 - 2 - description.len as u32))]
     payload: TypeDescPayload,
-    //#[br(count= len - 4*4 - 2 - description.len as u32)]
-    //payload: Vec<u8>,
 }
 
 #[derive(Clone, Debug)]
@@ -125,8 +110,9 @@ impl BinRead for TypeDescPayload {
         Ok(match args.0 {
             0x09 => Self::Array(ArrayDesc::read_options(reader, options, ())?),
             0x0b => {
-                let x = X4DataXBTail::read_options(reader, options, ())?;
-                Self::Struct(x.entries)
+                let count = u32::read_options(reader, options, ())? as usize;
+                let args = VecArgs { count, inner: () };
+                Self::Struct(Vec::<StructMember>::read_options(reader, options, args)?)
             }
             0x17 => Self::Pointer(u32::read_options(reader, options, ())?),
             _ => Self::Other(reader.read_type_args(
@@ -244,7 +230,7 @@ impl Debug for SdbStr {
 
 pub fn print_sdb_file() -> Result<()> {
     let sdb = read_sdb_file()?;
-    println!("{} entries in SDB.", sdb.entries.len());
+    println!("{} entries in SDB.", sdb.parameters.len());
     // entries.sort_by_key(|e| e.value_type);
     // entries.dedup_by_key(|e| e.value_type);
 
@@ -262,19 +248,6 @@ pub fn print_sdb_file() -> Result<()> {
 
     for e in sdb.entries.iter() {
         println!("{e:x?}");
-        if let Entry::Parameter(ref p) = e {
-            if p.value_type == ValueType::x9 {
-                //println!("{p:?}");
-            }
-            if p.name.try_as_str()?.starts_with(".Gauge[1].Parameter[1]") {
-                //println!("{p:?}");
-            }
-            if p.i2 != 0 {
-                // println!("{:?}", p);
-            }
-        } else {
-            //   println!("{e:?}")
-        }
     }
     Ok(())
 }
@@ -323,14 +296,6 @@ pub struct ArrayDesc {
     dims: Vec<(u32, u32)>,
 }
 
-#[binread]
-#[derive(Debug, Clone)]
-#[br(little)]
-pub struct X4DataXBTail {
-    count: u32,
-    #[br(count = count)]
-    entries: Vec<StructMember>,
-}
 #[binread]
 #[derive(Debug, Clone)]
 #[br(little, magic = 0x05u32)]
