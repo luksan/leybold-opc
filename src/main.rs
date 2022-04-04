@@ -1,4 +1,4 @@
-#![allow(dead_code, unused_mut)]
+#![allow(dead_code, unused_mut, unused_imports)]
 
 mod packets;
 mod sdb;
@@ -173,7 +173,7 @@ fn main() -> Result<()> {
     // let r = download_sbd()?;
     // println!("{:x?}", r);
 
-    sdb::x04_analysis()?;
+    sdb::print_sdb_file()?;
     //poll_pressure()?;
     Ok(())
 }
