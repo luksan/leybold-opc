@@ -8,24 +8,16 @@ use rhexdump::hexdump;
 use std::fmt::{Debug, Formatter};
 use std::io::{Cursor, Read, Seek};
 
-#[derive(BinRead, Clone, Debug)]
-#[br(little)]
-pub enum Entry {
-    #[br(magic = 0x06u32)]
-    Tail {
-        len: u32,
-        #[br(count = len - 8)]
-        data: Vec<u8>,
-    },
-}
-
 #[binread]
 #[derive(Clone, Debug)]
 #[br(little)]
 pub struct Sdb {
     #[br(magic = 1u32, temp)]
     hdr_len: u32,
-    hdr_data: [u32; 7],
+    hdr_data: [u32; 3],
+    /// Total size of the SDB in bytes
+    total_sbd_size: u32,
+    hdr_data_2: [u32; 3],
     #[br(temp)]
     type_descr_cnt: u32,
 
@@ -41,25 +33,10 @@ pub struct Sdb {
     #[br(count = param_cnt)]
     parameters: Vec<Parameter>,
 
-    #[br(parse_with = parse_entries)]
-    entries: Vec<Entry>,
-}
-
-fn parse_entries<Reader: Read + Seek>(
-    reader: &mut Reader,
-    opts: &ReadOptions,
-    args: (),
-) -> BinResult<Vec<Entry>> {
-    let mut entries = vec![];
-    loop {
-        match Entry::read_options(reader, opts, args) {
-            Ok(e) => entries.push(e),
-            Err(_) => {
-                break;
-            }
-        }
-    }
-    Ok(entries)
+    #[br(magic = 6u32, temp)]
+    tail_len: u32,
+    #[br(count = tail_len - 8)]
+    tail: Vec<u8>,
 }
 
 #[binread]
@@ -224,6 +201,8 @@ pub fn print_sdb_file() -> Result<()> {
     // entries.sort_by_key(|e| e.value_type);
     // entries.dedup_by_key(|e| e.value_type);
 
+    println!("Header data {:?}, {:?}", sdb.hdr_data, sdb.hdr_data_2);
+
     for t in &sdb.type_descr {
         // println!("{t:?}");
         println!(
@@ -236,9 +215,7 @@ pub fn print_sdb_file() -> Result<()> {
         println!("Param {p:?}");
     }
 
-    for e in sdb.entries.iter() {
-        println!("{e:x?}");
-    }
+    println!("{}", hexdump(&sdb.tail));
     Ok(())
 }
 
