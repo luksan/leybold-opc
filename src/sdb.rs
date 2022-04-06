@@ -111,9 +111,11 @@ impl BinRead for TypeDescPayload {
     }
 }
 
-#[derive(BinRead, Clone, PartialEq)]
+#[binread]
+#[derive(Clone, PartialEq)]
 #[br(little, magic = 0x05u32)]
 pub struct Parameter {
+    #[br(temp)]
     len: u32,
     pub type_descr_idx: u32,
     pub i2a: u16,
@@ -199,7 +201,8 @@ pub struct ArrayDesc {
 #[derive(Debug, Clone)]
 #[br(little, magic = 0x05u32)]
 pub struct StructMember {
-    i1: u32,
+    #[br(temp)]
+    len: u32,
     type_descr_idx: u32,
     i: [u32; 2],
     id_offset: u32, // the number to add to this parameters id to get the sub entries id.
