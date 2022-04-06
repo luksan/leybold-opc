@@ -47,11 +47,29 @@ pub struct TypeDescription {
     type_idx: u32, // this is set in struct Sdb
     #[br(temp)]
     len: u32,
-    i1: u32,
+    kind: TypeKind,
     type_size: u32,
     description: SdbStr,
-    #[br(args (i1, len - 4*4 - 2 - description.len as u32))]
+    #[br(args (kind, len - 4*4 - 2 - description.len as u32))]
     payload: TypeDescPayload,
+}
+
+#[derive(Copy, Clone, Debug, BinRead, PartialEq)]
+#[br(repr(u32), little)]
+pub enum TypeKind {
+    Bool = 0,
+    Int = 1,
+    Byte = 2,
+    Word = 3,
+    Dword = 5,
+    Real = 6,
+    Time = 7,
+    String = 8,
+    Array = 9,
+    Data = 11,
+    Uint = 0x10,
+    Udint = 0x11,
+    Pointer = 0x17,
 }
 
 #[derive(Clone, Debug)]
@@ -64,7 +82,7 @@ pub enum TypeDescPayload {
 }
 
 impl BinRead for TypeDescPayload {
-    type Args = (u32, u32); // type, payload len
+    type Args = (TypeKind, u32); // type, payload len
 
     fn read_options<R: Read + Seek>(
         reader: &mut R,
@@ -75,13 +93,13 @@ impl BinRead for TypeDescPayload {
             return Ok(Self::None);
         }
         Ok(match args.0 {
-            0x09 => Self::Array(ArrayDesc::read_options(reader, options, ())?),
-            0x0b => {
+            TypeKind::Array => Self::Array(ArrayDesc::read_options(reader, options, ())?),
+            TypeKind::Data => {
                 let count = u32::read_options(reader, options, ())? as usize;
                 let args = VecArgs { count, inner: () };
                 Self::Struct(Vec::<StructMember>::read_options(reader, options, args)?)
             }
-            0x17 => Self::Pointer(u32::read_options(reader, options, ())?),
+            TypeKind::Pointer => Self::Pointer(u32::read_options(reader, options, ())?),
             _ => Self::Other(reader.read_type_args(
                 Endian::Little,
                 VecArgs {
@@ -206,8 +224,8 @@ pub fn print_sdb_file() -> Result<()> {
     for t in &sdb.type_descr {
         // println!("{t:?}");
         println!(
-            "Type #{:02} {:30?} read size: {:>5}, info: {:?}",
-            t.type_idx, t.description, t.type_size, t.payload
+            "Type #{:02} {:30?} {:?}, read size: {:>5}, info: {:?}",
+            t.type_idx, t.description, t.kind, t.type_size, t.payload
         );
     }
 
@@ -228,9 +246,9 @@ pub fn x04_analysis() -> Result<()> {
     for e in x04.iter() {
         let idx = e.type_idx;
         let name = e.description.try_as_str()?;
-        let i1 = e.i1;
+        let i1 = e.kind;
         let type_size = e.type_size;
-        println!("X04:{idx:2x} i1 {i1:2x}, tlen {type_size:5x}, {name}");
+        println!("X04:{idx:2x} kind {i1:?}, tlen {type_size:5x}, {name}");
         match &e.payload {
             TypeDescPayload::None => {}
             TypeDescPayload::Array(a) => {
