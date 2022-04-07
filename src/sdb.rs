@@ -31,12 +31,106 @@ pub struct Sdb {
     #[br(magic = 0u32, temp)] // consume four NUL bytes with magic
     param_cnt: u32,
     #[br(count = param_cnt)]
-    parameters: Vec<Parameter>,
+    parameters: Vec<SdbParam>,
 
     #[br(magic = 6u32, temp)]
     tail_len: u32,
     #[br(count = tail_len - 8)]
     tail: Vec<u8>,
+}
+
+impl Sdb {
+    pub fn param_by_name(&self, name: &str) -> Result<Parameter> {
+        let param = self
+            .parameters
+            .iter()
+            .find(|p| p.name == name)
+            .context("Parameter name not found")?;
+
+        let descr = self.get_desc(param.type_descr_idx)?;
+        Ok(Parameter {
+            sdb: self,
+            param,
+            descr,
+        })
+    }
+
+    fn param_by_id(&self, idx: u32) -> Result<Parameter> {
+        let param = self
+            .parameters
+            .iter()
+            .find(|p| p.id == idx)
+            .context("Parameter ID not found")?;
+
+        let descr = self.get_desc(param.type_descr_idx)?;
+        Ok(Parameter {
+            sdb: self,
+            param,
+            descr,
+        })
+    }
+
+    fn get_desc(&self, idx: u32) -> Result<&TypeDescription> {
+        self.type_descr
+            .get(idx as usize)
+            .context("Type descriptor not found")
+    }
+}
+
+#[derive(Copy, Clone)]
+pub struct Parameter<'a> {
+    sdb: &'a Sdb,
+    param: &'a SdbParam,
+    descr: &'a TypeDescription,
+}
+
+impl Parameter<'_> {
+    pub fn name(&self) -> &str {
+        self.param.name.try_as_str().unwrap()
+    }
+    pub fn id(&self) -> u32 {
+        self.param.id
+    }
+    pub fn response_len(&self) -> u32 {
+        self.descr.type_size
+    }
+    pub fn value_kind(&self) -> TypeKind {
+        self.descr.kind
+    }
+    pub fn array_info(&self) -> Option<(&TypeDescription, [usize; 2])> {
+        if let TypeDescPayload::Array(ref arr) = self.descr.payload {
+            let mut dims = [0; 2];
+            for d in 0..arr.dims.len() {
+                let x = arr.dims[d];
+                dims[d] = (x.1 - x.0 + 1) as usize;
+            }
+            Some((self.sdb.get_desc(arr.type_idx).ok()?, dims))
+        } else {
+            None
+        }
+    }
+    pub fn struct_info(&self) -> Option<Vec<Self>> {
+        if let TypeDescPayload::Struct(ref v) = self.descr.payload {
+            Some(
+                v.iter()
+                    .map(|m| self.sdb.param_by_id(self.id() + m.id_offset).ok())
+                    .collect::<Option<Vec<_>>>()?,
+            )
+        } else {
+            None
+        }
+    }
+}
+
+impl Debug for Parameter<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Parameter<{}>", self.name())
+    }
+}
+
+pub struct StructMemberInfo<'a> {
+    name: &'a str,
+    descr: &'a TypeDescription,
 }
 
 #[binread]
@@ -52,6 +146,16 @@ pub struct TypeDescription {
     description: SdbStr,
     #[br(args (kind, len - 4*4 - 2 - description.len as u32))]
     payload: TypeDescPayload,
+}
+
+impl TypeDescription {
+    pub fn kind(&self) -> TypeKind {
+        self.kind
+    }
+
+    pub fn read_len(&self) -> usize {
+        self.type_size as usize
+    }
 }
 
 #[derive(Copy, Clone, Debug, BinRead, PartialEq)]
@@ -114,7 +218,7 @@ impl BinRead for TypeDescPayload {
 #[binread]
 #[derive(Clone, PartialEq)]
 #[br(little, magic = 0x05u32)]
-pub struct Parameter {
+pub struct SdbParam {
     #[br(temp)]
     len: u32,
     pub type_descr_idx: u32,
@@ -125,7 +229,7 @@ pub struct Parameter {
     pub name: SdbStr,
 }
 
-impl Debug for Parameter {
+impl Debug for SdbParam {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -159,6 +263,12 @@ impl Debug for SdbStr {
         } else {
             write!(f, "\"{}\"", s)
         }
+    }
+}
+
+impl PartialEq<&str> for SdbStr {
+    fn eq(&self, other: &&str) -> bool {
+        self.try_as_str().ok().map(|s| s == *other).unwrap_or(false)
     }
 }
 

@@ -4,6 +4,8 @@ use binrw::{
 };
 use rhexdump::hexdump;
 
+use crate::sdb::TypeKind;
+use crate::Parameter;
 use std::fmt::{Debug, Formatter};
 use std::io::{Read, Seek, Write};
 use std::time::Duration;
@@ -285,3 +287,15 @@ where
 #[binread]
 #[br(big, magic = 0x01u8)]
 struct ParamResponse<T: Param + 'static>(#[br(pad_size_to = T::LEN)] T);
+
+/// Used when parsing the response from the instrument,
+/// for converting OPC types to native Rust types.
+pub enum Value {
+    Array(Vec<Value>),
+    Matrix(Vec<Vec<Value>>),
+    Bool(bool),
+    Int(i64),
+    Float(f32),
+    String(String),
+    Struct(Vec<(String, Value)>),
+}

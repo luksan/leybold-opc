@@ -12,7 +12,8 @@ use packets::{
     ResponsePayload,
 };
 
-use crate::packets::{PayloadParamsQuery, QueryParam};
+use crate::packets::{PayloadParamsQuery, QueryParam, Value};
+use crate::sdb::{Parameter, TypeKind};
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::ops::Deref;
@@ -164,6 +165,126 @@ fn poll_pressure() -> Result<()> {
         println!("{:x?}", r.payload);
         conn.send_66_ack()?;
     }
+}
+
+#[derive(Debug, Default, Clone)]
+struct ParamQuerySet<'a>(Vec<Parameter<'a>>);
+
+impl<'a> ParamQuerySet<'a> {
+    pub fn add_param(&mut self, param: Parameter<'a>) {
+        self.0.push(param);
+    }
+
+    pub fn create_query_packet(&self) -> PacketCC<PayloadParamsQuery> {
+        let params: Vec<_> = self
+            .0
+            .iter()
+            .map(|p| QueryParam::new(p.id(), p.response_len()))
+            .collect();
+        PacketCC::new(PayloadParamsQuery::new(params.as_slice()))
+    }
+
+    pub fn parse_response(&self, bytes: &[u8]) -> Result<Vec<Value>> {
+        let mut cur = Cursor::new(bytes);
+        let mut ret = Vec::with_capacity(self.0.len());
+        for param in self.0.iter() {
+            let val = Self::parse_param(&mut cur, param)?;
+            ret.push(val);
+        }
+        Ok(ret)
+    }
+
+    fn parse_param(mut cur: &mut Cursor<&[u8]>, param: &Parameter) -> Result<Value> {
+        Ok(match param.value_kind() {
+            TypeKind::Array => {
+                let (ty, dims) = param.array_info().unwrap();
+                match dims {
+                    [len, 0] => {
+                        let mut v = Vec::with_capacity(len);
+                        for _ in 0..len {
+                            v.push(Self::parse_scalar(ty.kind(), ty.read_len(), &mut cur)?);
+                        }
+                        Value::Array(v)
+                    }
+                    [a, b] => {
+                        unimplemented!("Have to check the order the elements are stored.")
+                    }
+                }
+            }
+            TypeKind::Data => {
+                let info = param.struct_info().unwrap();
+                let mut ret = Vec::with_capacity(info.len());
+                for m in info {
+                    let name = m.name().to_string();
+                    let value =
+                        Self::parse_scalar(m.value_kind(), m.response_len() as usize, &mut cur)?;
+                    ret.push((name, value));
+                }
+                Value::Struct(ret)
+            }
+            scalar => Self::parse_scalar(scalar, param.response_len() as usize, &mut cur)?,
+        })
+    }
+
+    fn parse_scalar(kind: TypeKind, len: usize, cur: &mut Cursor<&[u8]>) -> Result<Value> {
+        macro_rules! int {
+            ($ty:ty) => {{
+                assert_eq!(
+                    len,
+                    std::mem::size_of::<$ty>(),
+                    "Type size and specified size are unequal."
+                );
+                Value::Int(cur.read_be::<$ty>()? as i64)
+            }};
+        }
+
+        let value = match kind {
+            TypeKind::Bool => Value::Bool(cur.read_be::<u8>()? != 0),
+            TypeKind::Int => int!(i16),
+            TypeKind::Byte => int!(u8),
+            TypeKind::Word | TypeKind::Uint => int!(u16),
+            TypeKind::Dword | TypeKind::Udint => int!(u32),
+            TypeKind::Real => Value::Float(cur.read_be()?),
+            TypeKind::Time => {
+                unimplemented!()
+            }
+            TypeKind::String => {
+                let mut v = vec![0; len];
+                cur.read_exact(v.as_mut_slice())?;
+                Value::String(
+                    String::from_utf8_lossy(&v)
+                        .trim_end_matches('\u{0}')
+                        .to_string(),
+                )
+            }
+            TypeKind::Array | TypeKind::Data => {
+                panic!("parse_scalar() ony handles scalar values!")
+            }
+            TypeKind::Pointer => {
+                unimplemented!()
+            }
+        };
+
+        Ok(value)
+    }
+}
+
+fn read_dyn_params() -> Result<()> {
+    let sdb = sdb::read_sdb_file()?;
+    let param1 = sdb.param_by_name(".Gauge[1].Parameter[1].Name")?;
+    let param2 = sdb.param_by_name(".Gauge[1].Parameter[1].Value")?;
+
+    let mut param_set = ParamQuerySet::default();
+    param_set.add_param(param1);
+    param_set.add_param(param2);
+
+    let mut conn = Connection::connect()?;
+    conn.stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+
+    conn.send(&param_set.create_query_packet())?;
+    let r = conn.receive_response::<PayloadUnknown>()?;
+
+    Ok(())
 }
 
 fn main() -> Result<()> {
