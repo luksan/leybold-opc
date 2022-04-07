@@ -4,8 +4,6 @@ use binrw::{
 };
 use rhexdump::hexdump;
 
-use crate::sdb::{Parameter, TypeKind};
-
 use std::fmt::{Debug, Formatter};
 use std::io::{Read, Seek, Write};
 use std::time::Duration;
@@ -58,6 +56,20 @@ impl<P: ResponsePayload> BinRead for PacketCC<P> {
     ) -> BinResult<Self> {
         let hdr = PacketCCHeader::read_options(reader, options, ())?;
         let payload = P::read_options(reader, options, (hdr,))?;
+        Ok(Self { hdr, payload })
+    }
+}
+
+impl BinRead for PacketCC<PayloadDynResponse> {
+    type Args = Vec<usize>;
+
+    fn read_options<R: Read + Seek>(
+        reader: &mut R,
+        options: &ReadOptions,
+        args: Self::Args,
+    ) -> BinResult<Self> {
+        let hdr = PacketCCHeader::read_options(reader, options, ())?;
+        let payload = PayloadDynResponse::read_options(reader, options, args)?;
         Ok(Self { hdr, payload })
     }
 }
@@ -169,7 +181,7 @@ impl PayloadParamsQuery {
 
 impl SendPayload for PayloadParamsQuery {
     fn len(&self) -> u16 {
-        self.params.len() as u16 * (2 + 4 + 4) + 4 + 4
+        self.params.len() as u16 * (2 + 4 + 4) + 2 + 4 + 4
     }
 }
 
@@ -222,6 +234,10 @@ impl<const N: usize> Param for Bstr<N> {
     const LEN: usize = N;
 }
 
+impl<const N: usize> Param for [u8; N] {
+    const LEN: usize = N;
+}
+
 #[derive(Clone, Debug)]
 pub struct Params<P>(P);
 
@@ -243,11 +259,17 @@ param_impls!(end, A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, S, T);
 
 #[derive(Clone, Debug)]
 pub struct PayloadParamsResponse<PTuple: BinRead<Args = ()> + 'static> {
-    pub x0: [u8; 2], // 0 0
+    pub error_code: u16, // 0 == no error, 0x33 == invalid packet, when len in hdr is too short
     /// Timestamp, instrument uptime in milliseconds
     pub timestamp: Duration,
     params: Params<PTuple>,
     tail: Vec<u8>,
+}
+
+impl<PTuple: BinRead<Args = ()> + 'static> PayloadParamsResponse<PTuple> {
+    pub fn params(&self) -> &PTuple {
+        &self.params.0
+    }
 }
 
 impl<PTuple: BinRead<Args = ()>> BinRead for PayloadParamsResponse<PTuple>
@@ -261,14 +283,14 @@ where
         options: &ReadOptions,
         _args: Self::Args,
     ) -> BinResult<Self> {
-        let x0 = reader.read_type(options.endian())?;
+        let error_code = reader.read_type(options.endian())?;
         let timestamp =
             u32::read_options(reader, options, ()).map(|d| Duration::from_millis(d as u64))?;
         let params = reader.read_type(options.endian())?;
         let mut tail = Vec::new();
         reader.read_to_end(&mut tail)?;
         Ok(Self {
-            x0,
+            error_code,
             timestamp,
             params,
             tail,
@@ -283,6 +305,40 @@ where
 {
 }
 
+#[derive(BinRead, Copy, Clone, Debug)]
+#[br(big)]
+pub struct ParamResponseHeader {
+    pub error_code: u16,
+    #[br(map(|d:u32| Duration::from_millis(d as u64)))]
+    pub timestamp: Duration,
+}
+
+pub struct PayloadDynResponse {
+    pub hdr: ParamResponseHeader,
+    pub data: Vec<Vec<u8>>,
+}
+
+impl BinRead for PayloadDynResponse {
+    type Args = Vec<usize>;
+
+    fn read_options<R: Read + Seek>(
+        reader: &mut R,
+        options: &ReadOptions,
+        args: Self::Args,
+    ) -> BinResult<Self> {
+        let hdr = ParamResponseHeader::read_options(reader, options, ())?;
+        let data = args
+            .iter()
+            .map(|&len| reader.read_be_args::<DynParam>((len,)).map(|p| p.0))
+            .collect::<BinResult<Vec<_>>>()?;
+        Ok(Self { hdr, data })
+    }
+}
+
+#[derive(BinRead, Clone, Debug)]
+#[br(big, import(len: usize), magic = 1u8)]
+pub struct DynParam(#[br(count = len)] Vec<u8>);
+
 #[derive(Clone, PartialEq)]
 #[binread]
 #[br(big, magic = 0x01u8)]
@@ -290,6 +346,7 @@ struct ParamResponse<T: Param + 'static>(#[br(pad_size_to = T::LEN)] T);
 
 /// Used when parsing the response from the instrument,
 /// for converting OPC types to native Rust types.
+#[derive(Debug, Clone)]
 pub enum Value {
     Array(Vec<Value>),
     Matrix(Vec<Vec<Value>>),

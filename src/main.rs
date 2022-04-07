@@ -12,7 +12,7 @@ use packets::{
     ResponsePayload,
 };
 
-use packets::{PayloadParamsQuery, QueryParam, Value};
+use packets::{PayloadDynResponse, PayloadParamsQuery, QueryParam, Value};
 use sdb::{Parameter, TypeInfo, TypeKind};
 
 use std::io::{Read, Write};
@@ -64,6 +64,13 @@ impl Connection {
     }
 
     fn receive_response<P: ResponsePayload>(&mut self) -> Result<PacketCC<P>> {
+        self.receive_response_args(())
+    }
+
+    fn receive_response_args<P, Args>(&mut self, args: Args) -> Result<PacketCC<P>>
+    where
+        PacketCC<P>: BinRead<Args = Args>,
+    {
         let mut buf = vec![0; 24];
         self.stream.read_exact(buf.as_mut_slice())?;
         let hdr =
@@ -71,7 +78,9 @@ impl Connection {
         buf.resize(hdr.payload_len as usize + 24, 0);
         self.stream.read_exact(&mut buf[24..])?;
         // hex(&buf);
-        Cursor::new(buf).read_be().context("Response parse error.")
+        Cursor::new(buf)
+            .read_be_args(args)
+            .context("Response parse error.")
     }
 
     fn send_66_ack(&mut self) -> Result<()> {
@@ -130,11 +139,11 @@ fn download_sbd() -> Result<()> {
 
 fn poll_pressure() -> Result<()> {
     let mut _cmd = PacketCC::new(PayloadUnknown::from(hex_literal::hex!(
-         "2e 00 00 00 00 04" // the last byte is the number of parameters in the request
-         "00 03 00 04 78 7c 00 00 00 15" // last byte is byte len of the response
+         "2e 00 00 00 00 04" // the last 2 bytes is the number of parameters in the request
+         "00 03 00 04 78 7c 00 00 00 15" // last 2 bytes is byte len of the response
          "00 03 00 04 78 78 00 00 00 04"
          "00 03 00 04 78 78 00 00 00 04"
-         "00 03 00 04 78 7c 00 00 01 04"
+         "00 03 00 04 78 7c 00 00 00 04"
          "00 02 53 34"
     )));
 
@@ -182,20 +191,43 @@ impl<'a> ParamQuerySet<'a> {
             .iter()
             .map(|p| QueryParam::new(p.id(), p.type_info().response_len()))
             .collect();
-        PacketCC::new(PayloadParamsQuery::new(params.as_slice()))
+        let mut p = PacketCC::new(PayloadParamsQuery::new(params.as_slice()));
+        p.hdr.one_if_data_poll_maybe = 1;
+        p
     }
 
-    pub fn parse_response(&self, bytes: &[u8]) -> Result<Vec<Value>> {
-        let mut cur = Cursor::new(bytes);
-        let mut ret = Vec::with_capacity(self.0.len());
-        for param in self.0.iter() {
-            let val = Self::parse_param(&mut cur, &param.type_info())?;
-            ret.push(val);
-        }
+    pub fn response_param_len(&self) -> Vec<usize> {
+        self.0
+            .iter()
+            .map(|p| p.type_info().response_len() as _)
+            .collect()
+    }
+
+    pub fn parse_response(&self, bytes: &Vec<Vec<u8>>) -> Result<Vec<Value>> {
+        let ret = self
+            .0
+            .iter()
+            .zip(bytes.iter().map(|v| Cursor::new(v.as_slice())))
+            .map(|(param, mut cur)| {
+                Self::parse_param(&mut cur, &param.type_info())
+                    .with_context(|| format!("Parsing {:?}\n{}", param, hexdump(cur.get_ref())))
+            })
+            .collect::<Result<Vec<_>>>()?;
         Ok(ret)
     }
 
     fn parse_param(mut cur: &mut Cursor<&[u8]>, param: &TypeInfo) -> Result<Value> {
+        macro_rules! int {
+            ($ty:ty) => {{
+                assert_eq!(
+                    param.response_len() as usize,
+                    std::mem::size_of::<$ty>(),
+                    "Type size and specified size are unequal."
+                );
+                Value::Int(cur.read_be::<$ty>()? as i64)
+            }};
+        }
+
         Ok(match param.kind() {
             TypeKind::Array => {
                 let (ty, dims) = param.array_info().unwrap();
@@ -222,50 +254,29 @@ impl<'a> ParamQuerySet<'a> {
                 }
                 Value::Struct(ret)
             }
-            scalar => Self::parse_scalar(scalar, param.response_len() as usize, &mut cur)?,
-        })
-    }
-
-    fn parse_scalar(kind: TypeKind, len: usize, cur: &mut Cursor<&[u8]>) -> Result<Value> {
-        macro_rules! int {
-            ($ty:ty) => {{
-                assert_eq!(
-                    len,
-                    std::mem::size_of::<$ty>(),
-                    "Type size and specified size are unequal."
-                );
-                Value::Int(cur.read_be::<$ty>()? as i64)
-            }};
-        }
-
-        let value = match kind {
             TypeKind::Bool => Value::Bool(cur.read_be::<u8>()? != 0),
             TypeKind::Int => int!(i16),
             TypeKind::Byte => int!(u8),
             TypeKind::Word | TypeKind::Uint => int!(u16),
             TypeKind::Dword | TypeKind::Udint => int!(u32),
-            TypeKind::Real => Value::Float(cur.read_be()?),
+            TypeKind::Real => Value::Float(cur.read_be::<f32>()?),
             TypeKind::Time => {
                 unimplemented!()
             }
             TypeKind::String => {
-                let mut v = vec![0; len];
-                cur.read_exact(v.as_mut_slice())?;
+                let mut v = vec![0; param.response_len() as usize];
+                cur.read_exact(v.as_mut_slice())
+                    .context("Failed to read string from buffer.")?;
                 Value::String(
                     String::from_utf8_lossy(&v)
                         .trim_end_matches('\u{0}')
                         .to_string(),
                 )
             }
-            TypeKind::Array | TypeKind::Data => {
-                panic!("parse_scalar() ony handles scalar values!")
-            }
             TypeKind::Pointer => {
                 unimplemented!()
             }
-        };
-
-        Ok(value)
+        })
     }
 }
 
@@ -282,8 +293,10 @@ fn read_dyn_params() -> Result<()> {
     conn.stream.set_read_timeout(Some(Duration::from_secs(2)))?;
 
     conn.send(&param_set.create_query_packet())?;
-    let r = conn.receive_response::<PayloadUnknown>()?;
+    let r = conn.receive_response_args::<PayloadDynResponse, _>(param_set.response_param_len());
+    conn.send_66_ack()?;
 
+    println!("{:?}", param_set.parse_response(&r?.payload.data)?);
     Ok(())
 }
 
@@ -294,7 +307,8 @@ fn main() -> Result<()> {
     // let r = download_sbd()?;
     // println!("{:x?}", r);
 
-    sdb::print_sdb_file()?;
+    // sdb::print_sdb_file()?;
     //poll_pressure()?;
+    read_dyn_params()?;
     Ok(())
 }

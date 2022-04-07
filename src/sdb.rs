@@ -1,12 +1,9 @@
 use anyhow::{Context, Result};
-use binrw::{
-    binread, BinRead, BinReaderExt, BinResult, Endian, Error as BinErr, NullString, ReadOptions,
-    VecArgs,
-};
+use binrw::{binread, BinRead, BinReaderExt, BinResult, Endian, NullString, ReadOptions, VecArgs};
 
 use rhexdump::hexdump;
 use std::fmt::{Debug, Formatter};
-use std::io::{Cursor, Read, Seek};
+use std::io::{Read, Seek};
 
 pub use api::*;
 
@@ -149,7 +146,7 @@ impl Sdb {
             .parameters
             .iter()
             .find(|p| p.name == name)
-            .context("Parameter name not found")?;
+            .with_context(|| format!("Parameter name '{}' not found", name))?;
 
         let descr = self.get_desc(param.type_descr_idx)?;
         Ok(Parameter::new(self, param, descr))
