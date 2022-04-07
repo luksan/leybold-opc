@@ -267,11 +267,10 @@ impl<'a> ParamQuerySet<'a> {
                 let mut v = vec![0; param.response_len() as usize];
                 cur.read_exact(v.as_mut_slice())
                     .context("Failed to read string from buffer.")?;
-                Value::String(
-                    String::from_utf8_lossy(&v)
-                        .trim_end_matches('\u{0}')
-                        .to_string(),
-                )
+                if let Some(nul_pos) = v.iter().position(|&b| b == 0) {
+                    v.truncate(nul_pos);
+                }
+                Value::String(String::from_utf8_lossy(&v).to_string())
             }
             TypeKind::Pointer => {
                 unimplemented!()
@@ -282,7 +281,7 @@ impl<'a> ParamQuerySet<'a> {
 
 fn read_dyn_params() -> Result<()> {
     let sdb = sdb::read_sdb_file()?;
-    let param1 = sdb.param_by_name(".Gauge[1].Parameter[1].Name")?;
+    let param1 = sdb.param_by_name(".Gauge[1].Parameter[1]")?;
     let param2 = sdb.param_by_name(".Gauge[1].Parameter[1].Value")?;
 
     let mut param_set = ParamQuerySet::default();
