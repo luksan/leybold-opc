@@ -8,6 +8,110 @@ use rhexdump::hexdump;
 use std::fmt::{Debug, Formatter};
 use std::io::{Cursor, Read, Seek};
 
+pub use api::*;
+
+pub mod api {
+    use super::*;
+    pub use super::{Sdb, TypeKind};
+
+    #[derive(Copy, Clone)]
+    pub struct Parameter<'a> {
+        sdb: &'a Sdb,
+        param: &'a SdbParam,
+        descr: &'a TypeDescription,
+    }
+
+    impl<'a> Parameter<'a> {
+        pub(super) fn new(sdb: &'a Sdb, param: &'a SdbParam, descr: &'a TypeDescription) -> Self {
+            Self { sdb, param, descr }
+        }
+
+        pub fn name(&self) -> &str {
+            self.param.name.try_as_str().unwrap()
+        }
+        pub fn id(&self) -> u32 {
+            self.param.id
+        }
+
+        pub fn type_info(&self) -> TypeInfo {
+            TypeInfo {
+                sdb: self.sdb,
+                descr: self.descr,
+            }
+        }
+
+        pub fn value_kind(&self) -> TypeKind {
+            self.descr.kind
+        }
+    }
+
+    impl Debug for Parameter<'_> {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            write!(f, "Parameter<{}>", self.name())
+        }
+    }
+
+    #[derive(Copy, Clone, Debug)]
+    pub struct TypeInfo<'a> {
+        sdb: &'a Sdb,
+        descr: &'a TypeDescription,
+    }
+
+    impl<'a> TypeInfo<'a> {
+        fn new(sdb: &'a Sdb, idx: u32) -> Result<Self> {
+            let descr = sdb.get_desc(idx)?;
+            Ok(Self { sdb, descr })
+        }
+        pub fn kind(&self) -> TypeKind {
+            self.descr.kind
+        }
+
+        pub fn response_len(&self) -> u32 {
+            self.descr.type_size
+        }
+
+        pub fn array_info(&self) -> Option<(TypeInfo, [usize; 2])> {
+            if let TypeDescPayload::Array(ref arr) = self.descr.payload {
+                let mut dims = [0; 2];
+                for d in 0..arr.dims.len() {
+                    let x = arr.dims[d];
+                    dims[d] = (x.1 - x.0 + 1) as usize;
+                }
+                Some((TypeInfo::new(self.sdb, arr.type_idx).ok()?, dims))
+            } else {
+                None
+            }
+        }
+        pub fn struct_info(&self) -> Option<Vec<StructMemberInfo>> {
+            if let TypeDescPayload::Struct(ref v) = self.descr.payload {
+                Some(
+                    v.iter()
+                        .map(|m| {
+                            Some(StructMemberInfo {
+                                name: m.name.try_as_str().ok()?,
+                                type_info: Self::new(self.sdb, m.type_descr_idx).ok()?,
+                            })
+                        })
+                        .collect::<Option<Vec<_>>>()?,
+                )
+            } else {
+                None
+            }
+        }
+    }
+
+    #[derive(Copy, Clone, Debug)]
+    pub struct StructMemberInfo<'a> {
+        pub name: &'a str,
+        pub type_info: TypeInfo<'a>,
+    }
+
+    pub fn read_sdb_file() -> Result<Sdb> {
+        let mut file = std::io::BufReader::new(std::fs::File::open("sdb.dat")?);
+        Sdb::read(&mut file).context("Failed to parse SDB file.")
+    }
+}
+
 #[binread]
 #[derive(Clone, Debug)]
 #[br(little)]
@@ -48,11 +152,7 @@ impl Sdb {
             .context("Parameter name not found")?;
 
         let descr = self.get_desc(param.type_descr_idx)?;
-        Ok(Parameter {
-            sdb: self,
-            param,
-            descr,
-        })
+        Ok(Parameter::new(self, param, descr))
     }
 
     fn param_by_id(&self, idx: u32) -> Result<Parameter> {
@@ -63,11 +163,7 @@ impl Sdb {
             .context("Parameter ID not found")?;
 
         let descr = self.get_desc(param.type_descr_idx)?;
-        Ok(Parameter {
-            sdb: self,
-            param,
-            descr,
-        })
+        Ok(Parameter::new(self, param, descr))
     }
 
     fn get_desc(&self, idx: u32) -> Result<&TypeDescription> {
@@ -77,66 +173,10 @@ impl Sdb {
     }
 }
 
-#[derive(Copy, Clone)]
-pub struct Parameter<'a> {
-    sdb: &'a Sdb,
-    param: &'a SdbParam,
-    descr: &'a TypeDescription,
-}
-
-impl Parameter<'_> {
-    pub fn name(&self) -> &str {
-        self.param.name.try_as_str().unwrap()
-    }
-    pub fn id(&self) -> u32 {
-        self.param.id
-    }
-    pub fn response_len(&self) -> u32 {
-        self.descr.type_size
-    }
-    pub fn value_kind(&self) -> TypeKind {
-        self.descr.kind
-    }
-    pub fn array_info(&self) -> Option<(&TypeDescription, [usize; 2])> {
-        if let TypeDescPayload::Array(ref arr) = self.descr.payload {
-            let mut dims = [0; 2];
-            for d in 0..arr.dims.len() {
-                let x = arr.dims[d];
-                dims[d] = (x.1 - x.0 + 1) as usize;
-            }
-            Some((self.sdb.get_desc(arr.type_idx).ok()?, dims))
-        } else {
-            None
-        }
-    }
-    pub fn struct_info(&self) -> Option<Vec<Self>> {
-        if let TypeDescPayload::Struct(ref v) = self.descr.payload {
-            Some(
-                v.iter()
-                    .map(|m| self.sdb.param_by_id(self.id() + m.id_offset).ok())
-                    .collect::<Option<Vec<_>>>()?,
-            )
-        } else {
-            None
-        }
-    }
-}
-
-impl Debug for Parameter<'_> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Parameter<{}>", self.name())
-    }
-}
-
-pub struct StructMemberInfo<'a> {
-    name: &'a str,
-    descr: &'a TypeDescription,
-}
-
 #[binread]
 #[derive(Clone, Debug)]
 #[br(little, magic = 0x04u32)]
-pub struct TypeDescription {
+struct TypeDescription {
     #[br(default)]
     type_idx: u32, // this is set in struct Sdb
     #[br(temp)]
@@ -177,7 +217,7 @@ pub enum TypeKind {
 }
 
 #[derive(Clone, Debug)]
-pub enum TypeDescPayload {
+enum TypeDescPayload {
     None,
     Array(ArrayDesc),
     Struct(Vec<StructMember>),
@@ -218,15 +258,15 @@ impl BinRead for TypeDescPayload {
 #[binread]
 #[derive(Clone, PartialEq)]
 #[br(little, magic = 0x05u32)]
-pub struct SdbParam {
+struct SdbParam {
     #[br(temp)]
     len: u32,
-    pub type_descr_idx: u32,
-    pub i2a: u16,
-    pub i2: u16,
-    pub i3: u32,
-    pub id: u32,
-    pub name: SdbStr,
+    type_descr_idx: u32,
+    i2a: u16,
+    i2: u16,
+    i3: u32,
+    id: u32,
+    name: SdbStr,
 }
 
 impl Debug for SdbParam {
@@ -241,7 +281,7 @@ impl Debug for SdbParam {
 
 #[derive(BinRead, Clone, PartialEq)]
 #[br(little)]
-pub struct SdbStr {
+struct SdbStr {
     len: u16,
     #[br(align_after = 4)]
     s: NullString,
@@ -299,7 +339,7 @@ pub fn print_sdb_file() -> Result<()> {
 #[binread]
 #[derive(Debug, Clone)]
 #[br(little)]
-pub struct ArrayDesc {
+struct ArrayDesc {
     type_idx: u32,
     #[br(temp)]
     array_dim: u32,
@@ -310,16 +350,11 @@ pub struct ArrayDesc {
 #[binread]
 #[derive(Debug, Clone)]
 #[br(little, magic = 0x05u32)]
-pub struct StructMember {
+struct StructMember {
     #[br(temp)]
     len: u32,
     type_descr_idx: u32,
     i: [u32; 2],
     id_offset: u32, // the number to add to this parameters id to get the sub entries id.
     name: SdbStr,
-}
-
-pub fn read_sdb_file() -> Result<Sdb> {
-    let mut file = std::io::BufReader::new(std::fs::File::open("sdb.dat")?);
-    Sdb::read(&mut file).context("Failed to parse SDB file.")
 }

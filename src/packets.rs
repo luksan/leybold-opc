@@ -4,8 +4,8 @@ use binrw::{
 };
 use rhexdump::hexdump;
 
-use crate::sdb::TypeKind;
-use crate::Parameter;
+use crate::sdb::{Parameter, TypeKind};
+
 use std::fmt::{Debug, Formatter};
 use std::io::{Read, Seek, Write};
 use std::time::Duration;

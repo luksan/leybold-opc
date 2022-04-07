@@ -12,8 +12,9 @@ use packets::{
     ResponsePayload,
 };
 
-use crate::packets::{PayloadParamsQuery, QueryParam, Value};
-use crate::sdb::{Parameter, TypeKind};
+use packets::{PayloadParamsQuery, QueryParam, Value};
+use sdb::{Parameter, TypeInfo, TypeKind};
+
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::ops::Deref;
@@ -179,7 +180,7 @@ impl<'a> ParamQuerySet<'a> {
         let params: Vec<_> = self
             .0
             .iter()
-            .map(|p| QueryParam::new(p.id(), p.response_len()))
+            .map(|p| QueryParam::new(p.id(), p.type_info().response_len()))
             .collect();
         PacketCC::new(PayloadParamsQuery::new(params.as_slice()))
     }
@@ -188,25 +189,25 @@ impl<'a> ParamQuerySet<'a> {
         let mut cur = Cursor::new(bytes);
         let mut ret = Vec::with_capacity(self.0.len());
         for param in self.0.iter() {
-            let val = Self::parse_param(&mut cur, param)?;
+            let val = Self::parse_param(&mut cur, &param.type_info())?;
             ret.push(val);
         }
         Ok(ret)
     }
 
-    fn parse_param(mut cur: &mut Cursor<&[u8]>, param: &Parameter) -> Result<Value> {
-        Ok(match param.value_kind() {
+    fn parse_param(mut cur: &mut Cursor<&[u8]>, param: &TypeInfo) -> Result<Value> {
+        Ok(match param.kind() {
             TypeKind::Array => {
                 let (ty, dims) = param.array_info().unwrap();
                 match dims {
                     [len, 0] => {
                         let mut v = Vec::with_capacity(len);
                         for _ in 0..len {
-                            v.push(Self::parse_scalar(ty.kind(), ty.read_len(), &mut cur)?);
+                            v.push(Self::parse_param(&mut cur, &ty)?);
                         }
                         Value::Array(v)
                     }
-                    [a, b] => {
+                    [_a, _b] => {
                         unimplemented!("Have to check the order the elements are stored.")
                     }
                 }
@@ -215,9 +216,8 @@ impl<'a> ParamQuerySet<'a> {
                 let info = param.struct_info().unwrap();
                 let mut ret = Vec::with_capacity(info.len());
                 for m in info {
-                    let name = m.name().to_string();
-                    let value =
-                        Self::parse_scalar(m.value_kind(), m.response_len() as usize, &mut cur)?;
+                    let name = m.name.to_string();
+                    let value = Self::parse_param(&mut cur, &m.type_info)?;
                     ret.push((name, value));
                 }
                 Value::Struct(ret)
