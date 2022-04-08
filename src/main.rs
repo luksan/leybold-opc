@@ -1,4 +1,4 @@
-#![allow(dead_code, unused_mut, unused_imports)]
+#![allow(dead_code, unused_mut)]
 
 mod packets;
 mod sdb;
@@ -15,7 +15,7 @@ use packets::{
 use packets::{PayloadDynResponse, PayloadParamsQuery, QueryParam, Value};
 use sdb::{Parameter, TypeInfo, TypeKind};
 
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::net::TcpStream;
 use std::ops::Deref;
 use std::time::Duration;
@@ -217,6 +217,7 @@ impl<'a> ParamQuerySet<'a> {
     }
 
     fn parse_param(mut cur: &mut Cursor<&[u8]>, param: &TypeInfo) -> Result<Value> {
+        let start_pos = cur.position();
         macro_rules! int {
             ($ty:ty) => {{
                 assert_eq!(
@@ -224,11 +225,18 @@ impl<'a> ParamQuerySet<'a> {
                     std::mem::size_of::<$ty>(),
                     "Type size and specified size are unequal."
                 );
+                // adjust alignment to 2 bytes
+                let size = param.response_len().min(2) as i64;
+                let misalignment = start_pos as i64 % size;
+                if misalignment > 0 {
+                    // println!("Realign {}", size - misalignment);
+                    cur.seek(SeekFrom::Current(size - misalignment))
+                        .context("Failed to set alignment")?;
+                }
                 Value::Int(cur.read_be::<$ty>()? as i64)
             }};
         }
-
-        Ok(match param.kind() {
+        let value = match param.kind() {
             TypeKind::Array => {
                 let (ty, dims) = param.array_info().unwrap();
                 match dims {
@@ -258,11 +266,17 @@ impl<'a> ParamQuerySet<'a> {
             TypeKind::Int => int!(i16),
             TypeKind::Byte => int!(u8),
             TypeKind::Word | TypeKind::Uint => int!(u16),
-            TypeKind::Dword | TypeKind::Udint => int!(u32),
-            TypeKind::Real => Value::Float(cur.read_be::<f32>()?),
-            TypeKind::Time => {
-                unimplemented!()
+            TypeKind::Dword | TypeKind::Udint | TypeKind::Pointer => int!(u32),
+            TypeKind::Real => {
+                let size = 2;
+                let misalignment = start_pos as i64 % size;
+                if misalignment > 0 {
+                    cur.seek(SeekFrom::Current(size - misalignment))
+                        .context("Failed to set alignment")?;
+                }
+                Value::Float(cur.read_be::<f32>()?)
             }
+            TypeKind::Time => int!(u32),
             TypeKind::String => {
                 let mut v = vec![0; param.response_len() as usize];
                 cur.read_exact(v.as_mut_slice())
@@ -272,21 +286,24 @@ impl<'a> ParamQuerySet<'a> {
                 }
                 Value::String(String::from_utf8_lossy(&v).to_string())
             }
-            TypeKind::Pointer => {
-                unimplemented!()
-            }
-        })
+        };
+        if false {
+            println!(
+                "{:?} {value:?} from \n{}\n",
+                param.kind(),
+                hexdump(&cur.get_ref()[start_pos as usize..cur.position() as usize])
+            );
+        }
+        Ok(value)
     }
 }
 
 fn read_dyn_params() -> Result<()> {
     let sdb = sdb::read_sdb_file()?;
-    let param1 = sdb.param_by_name(".Gauge[1].Parameter[1]")?;
-    let param2 = sdb.param_by_name(".Gauge[1].Parameter[1].Value")?;
-
     let mut param_set = ParamQuerySet::default();
-    param_set.add_param(param1);
-    param_set.add_param(param2);
+    param_set.add_param(sdb.param_by_name(".Gauge[1]")?);
+    // param_set.add_param(sdb.param_by_name(".Gauge[1].Parameter[1].Value")?);
+    // param_set.add_param(sdb.param_by_name(".Gauge[1].Parameter[1].StringValue")?);
 
     let mut conn = Connection::connect()?;
     conn.stream.set_read_timeout(Some(Duration::from_secs(2)))?;
@@ -295,7 +312,12 @@ fn read_dyn_params() -> Result<()> {
     let r = conn.receive_response_args::<PayloadDynResponse, _>(param_set.response_param_len());
     conn.send_66_ack()?;
 
-    println!("{:?}", param_set.parse_response(&r?.payload.data)?);
+    let r = r?;
+    let resp = param_set.parse_response(&r.payload.data)?;
+    for (r, p) in resp.iter().zip(param_set.0.iter()) {
+        println!("{} {:?}", p.name(), r);
+    }
+    println!("Tail data: '{}'", hexdump(&r.tail));
     Ok(())
 }
 

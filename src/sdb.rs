@@ -320,7 +320,7 @@ pub fn print_sdb_file() -> Result<()> {
     for t in &sdb.type_descr {
         // println!("{t:?}");
         println!(
-            "Type #{:02} {:30?} {:?}, read size: {:>5}, info: {:?}",
+            "Type #{:02} {:30?} {:?}, read size: {:>5}, info: {:#?}",
             t.type_idx, t.description, t.kind, t.type_size, t.payload
         );
     }
@@ -334,7 +334,7 @@ pub fn print_sdb_file() -> Result<()> {
 }
 
 #[binread]
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 #[br(little)]
 struct ArrayDesc {
     type_idx: u32,
@@ -344,8 +344,14 @@ struct ArrayDesc {
     dims: Vec<(u32, u32)>,
 }
 
+impl Debug for ArrayDesc {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "type: {} size: {:?}", self.type_idx, self.dims)
+    }
+}
+
 #[binread]
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 #[br(little, magic = 0x05u32)]
 struct StructMember {
     #[br(temp)]
@@ -354,4 +360,15 @@ struct StructMember {
     i: [u32; 2],
     id_offset: u32, // the number to add to this parameters id to get the sub entries id.
     name: SdbStr,
+}
+
+impl Debug for StructMember {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} type: {}",
+            self.name.try_as_str().unwrap(),
+            self.type_descr_idx
+        )
+    }
 }

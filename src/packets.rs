@@ -43,6 +43,7 @@ where
 {
     pub hdr: PacketCCHeader,
     pub payload: Payload,
+    pub tail: Vec<u8>,
 }
 pub trait ResponsePayload: BinRead<Args = (PacketCCHeader,)> {}
 
@@ -56,7 +57,9 @@ impl<P: ResponsePayload> BinRead for PacketCC<P> {
     ) -> BinResult<Self> {
         let hdr = PacketCCHeader::read_options(reader, options, ())?;
         let payload = P::read_options(reader, options, (hdr,))?;
-        Ok(Self { hdr, payload })
+        let mut tail = Vec::new();
+        reader.read_to_end(&mut tail)?;
+        Ok(Self { hdr, payload, tail })
     }
 }
 
@@ -70,7 +73,9 @@ impl BinRead for PacketCC<PayloadDynResponse> {
     ) -> BinResult<Self> {
         let hdr = PacketCCHeader::read_options(reader, options, ())?;
         let payload = PayloadDynResponse::read_options(reader, options, args)?;
-        Ok(Self { hdr, payload })
+        let mut tail = Vec::new();
+        reader.read_to_end(&mut tail)?;
+        Ok(Self { hdr, payload, tail })
     }
 }
 
@@ -94,6 +99,7 @@ impl<P: SendPayload> PacketCC<P> {
         Self {
             hdr: PacketCCHeader::new_cmd(len),
             payload,
+            tail: vec![],
         }
     }
 }
@@ -346,8 +352,9 @@ struct ParamResponse<T: Param + 'static>(#[br(pad_size_to = T::LEN)] T);
 
 /// Used when parsing the response from the instrument,
 /// for converting OPC types to native Rust types.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum Value {
+    /// A Vec with Values
     Array(Vec<Value>),
     Matrix(Vec<Vec<Value>>),
     Bool(bool),
@@ -355,4 +362,28 @@ pub enum Value {
     Float(f32),
     String(String),
     Struct(Vec<(String, Value)>),
+}
+
+impl Debug for Value {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let pad = f.width().unwrap_or(0) + 2;
+        match self {
+            Self::Array(vec) => {
+                write!(f, "Array[{}] {vec:pad$?}", vec.len())
+            }
+            Self::Matrix(m) => write!(f, "{m:?})"),
+            Self::Struct(s) => {
+                writeln!(f, "Struct {{")?;
+                for m in s {
+                    writeln!(f, "{:>pad$}{}: {:pad$?}", "", m.0, m.1)?;
+                }
+                write!(f, "{:>pad$}}}", "", pad = pad - 2)
+            }
+
+            Self::Bool(b) => write!(f, "{b}"),
+            Self::Int(i) => write!(f, "{i}"),
+            Self::Float(i) => write!(f, "{i:?}"),
+            Self::String(s) => write!(f, "\"{s}\""),
+        }
+    }
 }
