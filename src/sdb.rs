@@ -326,7 +326,13 @@ pub fn print_sdb_file() -> Result<()> {
     }
 
     for p in &sdb.parameters {
-        println!("Param {p:?}");
+        let descr = sdb.get_desc(p.type_descr_idx).expect("Invalid type idx.");
+        let name = p.name.try_as_str().expect("Name not valid utf-8");
+        let kind = format!("{:?}", descr.kind);
+        println!(
+            "{name:38} id: {:05x}, type: {kind:10} i2a: {:x}, i2: {:x}, i3: {:x}",
+            p.id, p.i2a, p.i2, p.i3
+        )
     }
 
     println!("{}", hexdump(&sdb.tail));
