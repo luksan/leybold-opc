@@ -259,19 +259,27 @@ struct SdbParam {
     #[br(temp)]
     len: u32,
     type_descr_idx: u32,
-    i2a: u16,
-    i2: u16,
-    i3: u32,
+    flags: [u16; 2],
+    rw: AccessMode,
+    #[br(magic(0x03u16))]
     id: u32,
     name: SdbStr,
+}
+
+#[derive(BinRead, Debug, Copy, Clone, PartialEq)]
+#[br(little, repr(u16))]
+pub enum AccessMode {
+    Read = 0x72,
+    Write = 0xFF, // FIXME: I don't know.
+    ReadWrite = 0x62,
 }
 
 impl Debug for SdbParam {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "{:38?} id: {:05x}, type: {:?},\t i2a: {:x}, i2: {:x}, i3: {:x}",
-            self.name, self.id, self.type_descr_idx, self.i2a, self.i2, self.i3
+            "{:38?} id: {:05x}, type: {:?},\t flags: {:x?}, rw: {:?}",
+            self.name, self.id, self.type_descr_idx, self.flags, self.rw
         )
     }
 }
@@ -328,10 +336,13 @@ pub fn print_sdb_file() -> Result<()> {
     for p in &sdb.parameters {
         let descr = sdb.get_desc(p.type_descr_idx).expect("Invalid type idx.");
         let name = p.name.try_as_str().expect("Name not valid utf-8");
-        let kind = format!("{:?}", descr.kind);
+        let kind = format!("{:?}~{}", descr.kind, descr.read_len());
+        if descr.kind != TypeKind::Pointer {
+            //    continue;
+        }
         println!(
-            "{name:38} id: {:05x}, type: {kind:10} i2a: {:x}, i2: {:x}, i3: {:x}",
-            p.id, p.i2a, p.i2, p.i3
+            "{name:38} id: {:05x}, type: {kind:12} {:4x?}, {:?}",
+            p.id, p.flags, p.rw,
         )
     }
 
