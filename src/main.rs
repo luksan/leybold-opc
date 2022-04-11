@@ -1,5 +1,6 @@
 #![allow(dead_code, unused_mut)]
 
+mod opc_values;
 mod packets;
 mod sdb;
 
@@ -12,9 +13,8 @@ use packets::{
     ResponsePayload,
 };
 
-use packets::{
-    ParamWrite, PayloadDynResponse, PayloadParamWrite, PayloadParamsQuery, QueryParam, Value,
-};
+use opc_values::Value;
+use packets::{ParamWrite, PayloadDynResponse, PayloadParamWrite, PayloadParamsQuery, QueryParam};
 use sdb::{Parameter, TypeInfo, TypeKind};
 
 use std::io::{Read, Write};
@@ -209,89 +209,13 @@ impl<'a> ParamQuerySet<'a> {
         let ret = self
             .0
             .iter()
-            .zip(bytes.iter().map(|v| Cursor::new(v.as_slice())))
-            .map(|(param, mut cur)| {
-                Self::parse_param(&mut cur, &param.type_info())
-                    .with_context(|| format!("Parsing {:?}\n{}", param, hexdump(cur.get_ref())))
+            .zip(bytes.iter())
+            .map(|(param, bytes)| {
+                Value::parse(bytes, &param.type_info())
+                    .with_context(|| format!("Parsing {:?}\n{}", param, hexdump(bytes)))
             })
             .collect::<Result<Vec<_>>>()?;
         Ok(ret)
-    }
-
-    fn parse_param(mut cur: &mut Cursor<&[u8]>, param: &TypeInfo) -> Result<Value> {
-        let start_pos = cur.position();
-        macro_rules! int {
-            ($ty:ty) => {{
-                let read_len = param.response_len() as usize;
-                assert_eq!(
-                    read_len,
-                    std::mem::size_of::<$ty>(),
-                    "Type size and specified size are unequal."
-                );
-                if read_len > 1 && start_pos & 1 == 1 {
-                    // adjust alignment to 2 bytes
-                    cur.set_position(start_pos + 1);
-                }
-                Value::Int(cur.read_be::<$ty>()? as i64)
-            }};
-        }
-        let value = match param.kind() {
-            TypeKind::Array => {
-                let (ty, dims) = param.array_info().unwrap();
-                match dims {
-                    [len, 0] => {
-                        let mut v = Vec::with_capacity(len);
-                        for _ in 0..len {
-                            v.push(Self::parse_param(&mut cur, &ty)?);
-                        }
-                        Value::Array(v)
-                    }
-                    [_a, _b] => {
-                        unimplemented!("Have to check the order the elements are stored.")
-                    }
-                }
-            }
-            TypeKind::Data => {
-                let info = param.struct_info().unwrap();
-                let mut ret = Vec::with_capacity(info.len());
-                for m in info {
-                    let name = m.name.to_string();
-                    let value = Self::parse_param(&mut cur, &m.type_info)?;
-                    ret.push((name, value));
-                }
-                Value::Struct(ret)
-            }
-            TypeKind::Bool => Value::Bool(cur.read_be::<u8>()? != 0),
-            TypeKind::Int => int!(i16),
-            TypeKind::Byte => int!(u8),
-            TypeKind::Word | TypeKind::Uint => int!(u16),
-            TypeKind::Dword | TypeKind::Udint | TypeKind::Pointer => int!(u32),
-            TypeKind::Real => {
-                if start_pos & 1 == 1 {
-                    // Adjust alignment
-                    cur.set_position(start_pos + 1);
-                }
-                Value::Float(cur.read_be::<f32>()?)
-            }
-            TypeKind::Time => int!(u32),
-            TypeKind::String => {
-                let mut v = vec![0; param.response_len() as usize];
-                cur.read_exact(v.as_mut_slice())
-                    .context("Failed to read string from buffer.")?;
-                if let Some(nul_pos) = v.iter().position(|&b| b == 0) {
-                    v.truncate(nul_pos);
-                }
-                Value::String(String::from_utf8_lossy(&v).to_string())
-            }
-        };
-        if false {
-            println!(
-                "{:?} {value:?} from \n{}\n",
-                param.kind(),
-                hexdump(&cur.get_ref()[start_pos as usize..cur.position() as usize])
-            );
-        }
-        Ok(value)
     }
 }
 

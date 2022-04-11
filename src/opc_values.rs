@@ -1,0 +1,119 @@
+use crate::{TypeInfo, TypeKind};
+use anyhow::{Context, Result};
+use binrw::BinReaderExt;
+use std::fmt::{Debug, Formatter};
+use std::io::{Cursor, Read};
+
+/// Used when parsing the response from the instrument,
+/// for converting OPC types to native Rust types.
+#[derive(Clone)]
+pub enum Value {
+    /// A Vec with Values
+    Array(Vec<Value>),
+    Matrix(Vec<Vec<Value>>),
+    Bool(bool),
+    Int(i64),
+    Float(f32),
+    String(String),
+    Struct(Vec<(String, Value)>),
+}
+
+impl Debug for Value {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let pad = f.width().unwrap_or(0) + 2;
+        match self {
+            Self::Array(vec) => {
+                write!(f, "Array[{}] {vec:pad$?}", vec.len())
+            }
+            Self::Matrix(m) => write!(f, "{m:?})"),
+            Self::Struct(s) => {
+                writeln!(f, "Struct {{")?;
+                for m in s {
+                    writeln!(f, "{:>pad$}{}: {:pad$?}", "", m.0, m.1)?;
+                }
+                write!(f, "{:>pad$}}}", "", pad = pad - 2)
+            }
+
+            Self::Bool(b) => write!(f, "{b}"),
+            Self::Int(i) => write!(f, "{i}"),
+            Self::Float(i) => write!(f, "{i:?}"),
+            Self::String(s) => write!(f, "\"{s}\""),
+        }
+    }
+}
+
+impl Value {
+    pub(crate) fn parse(data: &[u8], param: &TypeInfo) -> Result<Self> {
+        let mut cur = Cursor::new(data);
+        Self::parse_param(&mut cur, param)
+    }
+
+    fn parse_param(mut cur: &mut Cursor<&[u8]>, param: &TypeInfo) -> Result<Self> {
+        let start_pos = cur.position();
+        macro_rules! int {
+            ($ty:ty) => {{
+                let read_len = param.response_len() as usize;
+                assert_eq!(
+                    read_len,
+                    std::mem::size_of::<$ty>(),
+                    "Type size and specified size are unequal."
+                );
+                if read_len > 1 && start_pos & 1 == 1 {
+                    // adjust alignment to 2 bytes
+                    cur.set_position(start_pos + 1);
+                }
+                Value::Int(cur.read_be::<$ty>()? as i64)
+            }};
+        }
+        let value = match param.kind() {
+            TypeKind::Array => {
+                let (ty, dims) = param.array_info().unwrap();
+                match dims {
+                    [len, 0] => {
+                        let mut v = Vec::with_capacity(len);
+                        for _ in 0..len {
+                            v.push(Self::parse_param(&mut cur, &ty)?);
+                        }
+                        Value::Array(v)
+                    }
+                    [_a, _b] => {
+                        unimplemented!("Have to check the order the elements are stored.")
+                    }
+                }
+            }
+            TypeKind::Data => {
+                let info = param.struct_info().unwrap();
+                let mut ret = Vec::with_capacity(info.len());
+                for m in info {
+                    let name = m.name.to_string();
+                    let value = Self::parse_param(&mut cur, &m.type_info)?;
+                    ret.push((name, value));
+                }
+                Value::Struct(ret)
+            }
+            TypeKind::Bool => Value::Bool(cur.read_be::<u8>()? != 0),
+            TypeKind::Int => int!(i16),
+            TypeKind::Byte => int!(u8),
+            TypeKind::Word | TypeKind::Uint => int!(u16),
+            TypeKind::Dword | TypeKind::Udint | TypeKind::Pointer => int!(u32),
+            TypeKind::Real => {
+                if start_pos & 1 == 1 {
+                    // Adjust alignment
+                    cur.set_position(start_pos + 1);
+                }
+                Value::Float(cur.read_be::<f32>()?)
+            }
+            TypeKind::Time => int!(u32),
+            TypeKind::String => {
+                let mut v = vec![0; param.response_len() as usize];
+                cur.read_exact(v.as_mut_slice())
+                    .context("Failed to read string from buffer.")?;
+                if let Some(nul_pos) = v.iter().position(|&b| b == 0) {
+                    v.truncate(nul_pos);
+                }
+                Value::String(String::from_utf8_lossy(&v).to_string())
+            }
+        };
+        Ok(value)
+    }
+}
