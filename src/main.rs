@@ -15,7 +15,7 @@ use packets::{
 use packets::{PayloadDynResponse, PayloadParamsQuery, QueryParam, Value};
 use sdb::{Parameter, TypeInfo, TypeKind};
 
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::ops::Deref;
 use std::time::Duration;
@@ -220,18 +220,15 @@ impl<'a> ParamQuerySet<'a> {
         let start_pos = cur.position();
         macro_rules! int {
             ($ty:ty) => {{
+                let read_len = param.response_len() as usize;
                 assert_eq!(
-                    param.response_len() as usize,
+                    read_len,
                     std::mem::size_of::<$ty>(),
                     "Type size and specified size are unequal."
                 );
-                // adjust alignment to 2 bytes
-                let size = param.response_len().min(2) as i64;
-                let misalignment = start_pos as i64 % size;
-                if misalignment > 0 {
-                    // println!("Realign {}", size - misalignment);
-                    cur.seek(SeekFrom::Current(size - misalignment))
-                        .context("Failed to set alignment")?;
+                if read_len > 1 && start_pos & 1 == 1 {
+                    // adjust alignment to 2 bytes
+                    cur.set_position(start_pos + 1);
                 }
                 Value::Int(cur.read_be::<$ty>()? as i64)
             }};
@@ -268,11 +265,9 @@ impl<'a> ParamQuerySet<'a> {
             TypeKind::Word | TypeKind::Uint => int!(u16),
             TypeKind::Dword | TypeKind::Udint | TypeKind::Pointer => int!(u32),
             TypeKind::Real => {
-                let size = 2;
-                let misalignment = start_pos as i64 % size;
-                if misalignment > 0 {
-                    cur.seek(SeekFrom::Current(size - misalignment))
-                        .context("Failed to set alignment")?;
+                if start_pos & 1 == 1 {
+                    // Adjust alignment
+                    cur.set_position(start_pos + 1);
                 }
                 Value::Float(cur.read_be::<f32>()?)
             }
