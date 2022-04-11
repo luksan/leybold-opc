@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use binrw::{
-    binread, binrw, BinRead, BinReaderExt, BinResult, BinWrite, ReadOptions, WriteOptions,
+    binread, binrw, binwrite, BinRead, BinReaderExt, BinResult, BinWrite, ReadOptions, WriteOptions,
 };
 use rhexdump::hexdump;
 
@@ -163,25 +163,25 @@ impl Debug for PayloadSdbDownload {
     }
 }
 
-#[derive(Clone, PartialEq)]
 #[binrw]
+#[derive(Clone, Debug)]
 #[br(big, import(_hdr: PacketCCHeader))]
 #[bw(big, magic = 0x2e00u16)]
 pub struct PayloadParamsQuery {
+    #[bw(calc = params.len() as u32)]
+    #[br(temp)]
     param_count: u32,
     #[br(count = param_count)]
     params: Vec<QueryParam>,
-    end: u32,
+    #[bw(magic = 0x00_02_53_34_u32)]
+    #[br(magic = 0x00_02_53_34_u32)]
+    end: (),
 }
 
 impl PayloadParamsQuery {
     pub fn new(params: &[QueryParam]) -> Self {
         let params = params.to_vec();
-        Self {
-            param_count: params.len() as u32,
-            params,
-            end: 0x00_02_53_34,
-        }
+        Self { params, end: () }
     }
 }
 
@@ -191,8 +191,59 @@ impl SendPayload for PayloadParamsQuery {
     }
 }
 
-#[derive(Clone, PartialEq)]
+/// Instructs the instrument to change the value of the given parameters.
+#[binwrite]
+#[derive(Clone, Debug)]
+#[bw(big, magic = 0x3c00u16)]
+pub struct PayloadParamWrite {
+    #[bw(calc = params.len() as u32)]
+    param_count: u32,
+    params: Vec<ParamWrite>,
+    #[bw(magic = 0x00_02_53_34_u32)]
+    end: (),
+}
+
+impl PayloadParamWrite {
+    pub fn new(params: &[ParamWrite]) -> Self {
+        Self {
+            params: params.to_vec(),
+            end: (),
+        }
+    }
+}
+
+impl SendPayload for PayloadParamWrite {
+    fn len(&self) -> u16 {
+        let params: u16 = self
+            .params
+            .iter()
+            .map(|p| 2 + 4 + p.data.len() as u16)
+            .sum();
+        2 + 4 + params + 4
+    }
+}
+
+#[binwrite]
+#[derive(Clone, Debug)]
+#[bw(big, magic = 3u16)]
+pub struct ParamWrite {
+    param_id: u32,
+    #[bw(calc = data.len() as u32)]
+    data_len: u32,
+    data: Vec<u8>,
+}
+
+impl ParamWrite {
+    pub fn new(param_id: u32, data: &[u8]) -> Self {
+        Self {
+            param_id,
+            data: data.to_vec(),
+        }
+    }
+}
+
 #[binrw]
+#[derive(Copy, Clone, Debug)]
 #[bw(big, magic = 0x03u16)]
 pub struct QueryParam {
     param_id: u32,

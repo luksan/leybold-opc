@@ -12,7 +12,9 @@ use packets::{
     ResponsePayload,
 };
 
-use packets::{PayloadDynResponse, PayloadParamsQuery, QueryParam, Value};
+use packets::{
+    ParamWrite, PayloadDynResponse, PayloadParamWrite, PayloadParamsQuery, QueryParam, Value,
+};
 use sdb::{Parameter, TypeInfo, TypeKind};
 
 use std::io::{Read, Write};
@@ -296,7 +298,7 @@ impl<'a> ParamQuerySet<'a> {
 fn read_dyn_params() -> Result<()> {
     let sdb = sdb::read_sdb_file()?;
     let mut param_set = ParamQuerySet::default();
-    param_set.add_param(sdb.param_by_name(".Gauge[1]")?);
+    param_set.add_param(sdb.param_by_name(".CockpitUser")?);
     // param_set.add_param(sdb.param_by_name(".Gauge[1].Parameter[1].Value")?);
     // param_set.add_param(sdb.param_by_name(".Gauge[1].Parameter[1].StringValue")?);
 
@@ -316,6 +318,28 @@ fn read_dyn_params() -> Result<()> {
     Ok(())
 }
 
+fn write_param() -> Result<()> {
+    let sdb = sdb::read_sdb_file()?;
+    let param = sdb.param_by_name(".CockpitUser")?;
+    let len = param.type_info().response_len() as usize;
+    let mut data = Vec::with_capacity(len);
+    write!(&mut data, "Test123")?;
+    data.resize(len, 0);
+
+    let packet = PacketCC::new(PayloadParamWrite::new(&[ParamWrite::new(
+        param.id(),
+        &data,
+    )]));
+    let mut conn = Connection::connect()?;
+    conn.stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+    conn.send(&packet)?;
+    let r = conn.receive_response::<PayloadUnknown>();
+    conn.send_66_ack()?;
+    println!("{r:?}");
+    r?;
+    Ok(())
+}
+
 fn main() -> Result<()> {
     // let pkt = query_download_sdb();
     // let pkt = query_fw_ver();
@@ -325,6 +349,8 @@ fn main() -> Result<()> {
 
     // sdb::print_sdb_file()?;
     //poll_pressure()?;
-    read_dyn_params()?;
+    // read_dyn_params()?;
+
+    write_param()?;
     Ok(())
 }

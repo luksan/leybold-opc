@@ -37,6 +37,7 @@ pub mod api {
             }
         }
 
+        /// Returns a TypeKind enum value, describing the data type of the parameter.
         pub fn value_kind(&self) -> TypeKind {
             self.descr.kind
         }
@@ -195,6 +196,7 @@ impl TypeDescription {
     }
 }
 
+/// The various parameter data types
 #[derive(Copy, Clone, Debug, BinRead, PartialEq)]
 #[br(repr(u32), little)]
 pub enum TypeKind {
