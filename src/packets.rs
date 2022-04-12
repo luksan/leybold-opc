@@ -260,27 +260,6 @@ impl ParamRead {
     }
 }
 
-#[derive(Clone)]
-#[binread]
-pub struct Bstr<const LEN: usize>(#[br(count = LEN)] Vec<u8>);
-
-impl<const LEN: usize> Bstr<LEN> {
-    pub fn try_as_str(&self) -> Result<&str> {
-        std::str::from_utf8(self.0.as_slice().split(|&c| c == 0).next().unwrap())
-            .context("Bstr is not valid utf-8")
-    }
-}
-
-impl<const LEN: usize> Debug for Bstr<LEN> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        if let Ok(s) = self.try_as_str() {
-            write!(f, "{}", s)
-        } else {
-            write!(f, "{:?}", self.0)
-        }
-    }
-}
-
 #[binread]
 #[derive(Clone, Debug)]
 #[br(big, import(payload_lengths: Vec<usize>))]
