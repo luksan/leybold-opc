@@ -166,29 +166,28 @@ impl Debug for PayloadSdbDownload {
     }
 }
 
-#[binrw]
+#[binwrite]
 #[derive(Clone, Debug)]
 #[br(big, import(_hdr: PacketCCHeader))]
 #[bw(big, magic = 0x2e00u16)]
-pub struct PayloadParamsQuery {
+pub struct PayloadParamsRead {
     #[bw(calc = params.len() as u32)]
     #[br(temp)]
     param_count: u32,
     #[br(count = param_count)]
-    params: Vec<QueryParam>,
+    params: Vec<ParamRead>,
     #[bw(magic = 0x00_02_53_34_u32)]
-    #[br(magic = 0x00_02_53_34_u32)]
     end: (),
 }
 
-impl PayloadParamsQuery {
-    pub fn new(params: &[QueryParam]) -> Self {
+impl PayloadParamsRead {
+    pub fn new(params: &[ParamRead]) -> Self {
         let params = params.to_vec();
         Self { params, end: () }
     }
 }
 
-impl SendPayload for PayloadParamsQuery {
+impl SendPayload for PayloadParamsRead {
     fn len(&self) -> u16 {
         self.params.len() as u16 * (2 + 4 + 4) + 2 + 4 + 4
     }
@@ -248,26 +247,18 @@ impl ParamWrite {
 #[binrw]
 #[derive(Copy, Clone, Debug)]
 #[bw(big, magic = 0x03u16)]
-pub struct QueryParam {
+pub struct ParamRead {
     param_id: u32,
     response_len: u32,
 }
 
-impl QueryParam {
+impl ParamRead {
     pub fn new(param_id: u32, response_len: u32) -> Self {
         Self {
             param_id,
             response_len,
         }
     }
-}
-
-pub trait Param: BinRead<Args = ()> {
-    const LEN: usize;
-}
-
-impl Param for f32 {
-    const LEN: usize = 4;
 }
 
 #[derive(Clone)]
@@ -290,80 +281,6 @@ impl<const LEN: usize> Debug for Bstr<LEN> {
         }
     }
 }
-impl<const N: usize> Param for Bstr<N> {
-    const LEN: usize = N;
-}
-
-impl<const N: usize> Param for [u8; N] {
-    const LEN: usize = N;
-}
-
-#[derive(Clone, Debug)]
-pub struct Params<P>(P);
-
-macro_rules! param_impls {
-    ($end:ident) => {};
-    ( $head:ident, $( $name:ident ),+ ) => {
-        impl<$($name: Param),+> BinRead for Params<($($name,)+)> {
-            type Args = ();
-            fn read_options<R: Read + Seek>(reader: &mut R, options: &ReadOptions, _args: Self::Args)
-              -> BinResult<Self> {
-                Ok(Self(($(ParamResponse::<$name>::read_options(reader, options, ())?.0,)+)))
-            }
-        }
-        param_impls!($($name),+);
-    };
-}
-
-param_impls!(end, A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, S, T);
-
-#[derive(Clone, Debug)]
-pub struct PayloadParamsResponse<PTuple: BinRead<Args = ()> + 'static> {
-    pub error_code: u16, // 0 == no error, 0x33 == invalid packet, when len in hdr is too short
-    /// Timestamp, instrument uptime in milliseconds
-    pub timestamp: Duration,
-    params: Params<PTuple>,
-    tail: Vec<u8>,
-}
-
-impl<PTuple: BinRead<Args = ()> + 'static> PayloadParamsResponse<PTuple> {
-    pub fn params(&self) -> &PTuple {
-        &self.params.0
-    }
-}
-
-impl<PTuple: BinRead<Args = ()>> BinRead for PayloadParamsResponse<PTuple>
-where
-    Params<PTuple>: BinRead<Args = ()>,
-{
-    type Args = (PacketCCHeader,);
-
-    fn read_options<R: Read + Seek>(
-        reader: &mut R,
-        options: &ReadOptions,
-        _args: Self::Args,
-    ) -> BinResult<Self> {
-        let error_code = reader.read_type(options.endian())?;
-        let timestamp =
-            u32::read_options(reader, options, ()).map(|d| Duration::from_millis(d as u64))?;
-        let params = reader.read_type(options.endian())?;
-        let mut tail = Vec::new();
-        reader.read_to_end(&mut tail)?;
-        Ok(Self {
-            error_code,
-            timestamp,
-            params,
-            tail,
-        })
-    }
-}
-
-impl<PTuple> ResponsePayload for PayloadParamsResponse<PTuple>
-where
-    PTuple: BinRead<Args = ()>,
-    Params<PTuple>: BinRead<Args = ()>,
-{
-}
 
 #[derive(BinRead, Copy, Clone, Debug)]
 #[br(big)]
@@ -374,7 +291,8 @@ pub struct ParamResponseHeader {
 }
 
 pub struct PayloadDynResponse {
-    pub hdr: ParamResponseHeader,
+    pub error_code: u16,
+    pub timestamp: Duration,
     pub data: Vec<Vec<u8>>,
 }
 
@@ -391,15 +309,14 @@ impl BinRead for PayloadDynResponse {
             .iter()
             .map(|&len| reader.read_be_args::<DynParam>((len,)).map(|p| p.0))
             .collect::<BinResult<Vec<_>>>()?;
-        Ok(Self { hdr, data })
+        Ok(Self {
+            error_code: hdr.error_code,
+            timestamp: hdr.timestamp,
+            data,
+        })
     }
 }
 
 #[derive(BinRead, Clone, Debug)]
 #[br(big, import(len: usize), magic = 1u8)]
 pub struct DynParam(#[br(count = len)] Vec<u8>);
-
-#[derive(Clone, PartialEq)]
-#[binread]
-#[br(big, magic = 0x01u8)]
-struct ParamResponse<T: Param + 'static>(#[br(pad_size_to = T::LEN)] T);

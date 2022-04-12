@@ -8,13 +8,10 @@ use anyhow::{bail, Context, Result};
 use binrw::{io::Cursor, BinRead, BinReaderExt, BinWrite};
 use rhexdump::hexdump;
 
-use packets::{
-    Bstr, PacketCC, PacketCCHeader, PayloadParamsResponse, PayloadSdbDownload, PayloadUnknown,
-    ResponsePayload,
-};
+use packets::{PacketCC, PacketCCHeader, PayloadSdbDownload, PayloadUnknown, ResponsePayload};
 
 use opc_values::Value;
-use packets::{ParamWrite, PayloadDynResponse, PayloadParamWrite, PayloadParamsQuery, QueryParam};
+use packets::{ParamRead, ParamWrite, PayloadDynResponse, PayloadParamWrite, PayloadParamsRead};
 use sdb::{Parameter, TypeInfo, TypeKind};
 
 use std::io::{Read, Write};
@@ -140,32 +137,20 @@ fn download_sbd() -> Result<()> {
 }
 
 fn poll_pressure() -> Result<()> {
-    let mut _cmd = PacketCC::new(PayloadUnknown::from(hex_literal::hex!(
-         "2e 00 00 00 00 04" // the last 2 bytes is the number of parameters in the request
-         "00 03 00 04 78 7c 00 00 00 15" // last 2 bytes is byte len of the response
-         "00 03 00 04 78 78 00 00 00 04"
-         "00 03 00 04 78 78 00 00 00 04"
-         "00 03 00 04 78 7c 00 00 00 04"
-         "00 02 53 34"
-    )));
-
-    let mut cmd = PacketCC::new(PayloadParamsQuery::new(&[
-        QueryParam::new(0x4787c, 0x15),
-        QueryParam::new(0x47878, 4),
-        QueryParam::new(0x47878, 4),
-        QueryParam::new(0x4787c, 4),
-    ]));
-    cmd.hdr.one_if_data_poll_maybe = 1;
+    let mut param_set = ParamQuerySet::default();
+    let sdb = sdb::read_sdb_file()?;
+    param_set.add_param(sdb.param_by_name(".Gauge[1].Parameter[1].Value")?);
 
     let mut last_timestamp = 0.0;
     let mut last_time = std::time::Instant::now();
     let mut conn = Connection::connect()?;
     conn.stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+
+    let pkt = param_set.create_query_packet();
     loop {
-        conn.send(&cmd)?;
-        //     let r = conn.receive_response::<PayloadUnknown>()?;
+        conn.send(&pkt)?;
         let r =
-            conn.receive_response::<PayloadParamsResponse<(Bstr<0x15>, f32, f32, Bstr<0x04>)>>()?;
+            conn.receive_response_args::<PayloadDynResponse, _>(param_set.response_param_len())?;
         let now = std::time::Instant::now();
         println!(
             "time delta {:.2} == {:.2} ms",
@@ -174,11 +159,11 @@ fn poll_pressure() -> Result<()> {
         );
         last_time = now;
         last_timestamp = r.payload.timestamp.as_secs_f64();
-        println!("{:x?}", r.payload);
+        let response = param_set.parse_response(&r.payload.data)?;
+        println!("Pressure {response:x?} mbar.");
         conn.send_66_ack()?;
     }
 }
-
 #[derive(Debug, Default, Clone)]
 struct ParamQuerySet<'a>(Vec<Parameter<'a>>);
 
@@ -187,13 +172,13 @@ impl<'a> ParamQuerySet<'a> {
         self.0.push(param);
     }
 
-    pub fn create_query_packet(&self) -> PacketCC<PayloadParamsQuery> {
+    pub fn create_query_packet(&self) -> PacketCC<PayloadParamsRead> {
         let params: Vec<_> = self
             .0
             .iter()
-            .map(|p| QueryParam::new(p.id(), p.type_info().response_len() as u32))
+            .map(|p| ParamRead::new(p.id(), p.type_info().response_len() as u32))
             .collect();
-        let mut p = PacketCC::new(PayloadParamsQuery::new(params.as_slice()));
+        let mut p = PacketCC::new(PayloadParamsRead::new(params.as_slice()));
         p.hdr.one_if_data_poll_maybe = 1;
         p
     }
