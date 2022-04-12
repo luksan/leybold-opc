@@ -1,5 +1,5 @@
 use crate::{TypeInfo, TypeKind};
-use anyhow::{Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use binrw::BinReaderExt;
 use std::fmt::{Debug, Formatter};
 use std::io::{Cursor, Read};
@@ -105,7 +105,7 @@ impl Value {
             }
             TypeKind::Time => int!(u32),
             TypeKind::String => {
-                let mut v = vec![0; param.response_len() as usize];
+                let mut v = vec![0; param.response_len()];
                 cur.read_exact(v.as_mut_slice())
                     .context("Failed to read string from buffer.")?;
                 if let Some(nul_pos) = v.iter().position(|&b| b == 0) {
@@ -115,5 +115,57 @@ impl Value {
             }
         };
         Ok(value)
+    }
+}
+
+pub trait EncodeOpcValue {
+    fn opc_encode(self, desc: &TypeInfo) -> Result<Vec<u8>>;
+}
+
+macro_rules! impl_enc_int {
+    ($($int:ty),+) => {$(
+        impl EncodeOpcValue for $int {
+            fn opc_encode(self, desc: &TypeInfo) -> Result<Vec<u8>> {
+                let mut ret = Vec::with_capacity(desc.response_len());
+                macro_rules! try_into {
+                    ($ty:ty) => {{
+                        let x: $ty = self
+                            .try_into()
+                            .map_err(|_| anyhow!("Int didn't fit in OPC size."))?;
+                        ret.extend_from_slice(&x.to_be_bytes());
+                    }};
+                }
+                match desc.kind() {
+                    TypeKind::Byte => try_into!(u8),
+                    TypeKind::Int => try_into!(i16),
+                    TypeKind::Word | TypeKind::Uint => try_into!(u16),
+                    TypeKind::Dword | TypeKind::Udint => try_into!(u32),
+                    _ => bail!("Can't encode value"),
+                }
+                Ok(ret)
+            }
+        })+
+    };
+}
+impl_enc_int!(u8, i8, u16, i16, u32, i32, u64, i64, usize, isize);
+
+impl EncodeOpcValue for &[u8] {
+    fn opc_encode(self, desc: &TypeInfo) -> Result<Vec<u8>> {
+        if desc.kind() == TypeKind::String {
+            if self.len() > desc.response_len() {
+                bail!("Slice to big to fit in parameter")
+            }
+            let mut ret = Vec::from(self);
+            ret.resize(desc.response_len(), 0);
+            Ok(ret)
+        } else {
+            bail!("&[u8] can only be sent to String type parameters.")
+        }
+    }
+}
+
+impl<const N: usize> EncodeOpcValue for &[u8; N] {
+    fn opc_encode(self, desc: &TypeInfo) -> Result<Vec<u8>> {
+        self.as_slice().opc_encode(desc)
     }
 }

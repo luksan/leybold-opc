@@ -64,8 +64,8 @@ pub mod api {
             self.descr.kind
         }
 
-        pub fn response_len(&self) -> u32 {
-            self.descr.type_size
+        pub fn response_len(&self) -> usize {
+            self.descr.type_size as usize
         }
 
         pub fn array_info(&self) -> Option<(TypeInfo, [usize; 2])> {
@@ -201,16 +201,24 @@ impl TypeDescription {
 #[br(repr(u32), little)]
 pub enum TypeKind {
     Bool = 0,
+    /// Signed 2-byte int
     Int = 1,
     Byte = 2,
+    /// Unsigned 2-byte int
     Word = 3,
+    /// Unsigned 4-byte int
     Dword = 5,
+    /// 32 bit float
     Real = 6,
     Time = 7,
     String = 8,
+    /// Array data, see array_info()
     Array = 9,
+    /// Structured data, see struct_info()
     Data = 11,
+    /// Unsigned 2-byte int
     Uint = 0x10,
+    /// Unsigned 4-byte int
     Udint = 0x11,
     Pointer = 0x17,
 }

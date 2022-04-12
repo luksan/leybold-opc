@@ -191,7 +191,7 @@ impl<'a> ParamQuerySet<'a> {
         let params: Vec<_> = self
             .0
             .iter()
-            .map(|p| QueryParam::new(p.id(), p.type_info().response_len()))
+            .map(|p| QueryParam::new(p.id(), p.type_info().response_len() as u32))
             .collect();
         let mut p = PacketCC::new(PayloadParamsQuery::new(params.as_slice()));
         p.hdr.one_if_data_poll_maybe = 1;
@@ -201,7 +201,7 @@ impl<'a> ParamQuerySet<'a> {
     pub fn response_param_len(&self) -> Vec<usize> {
         self.0
             .iter()
-            .map(|p| p.type_info().response_len() as _)
+            .map(|p| p.type_info().response_len())
             .collect()
     }
 
@@ -245,15 +245,11 @@ fn read_dyn_params() -> Result<()> {
 fn write_param() -> Result<()> {
     let sdb = sdb::read_sdb_file()?;
     let param = sdb.param_by_name(".CockpitUser")?;
-    let len = param.type_info().response_len() as usize;
-    let mut data = Vec::with_capacity(len);
-    write!(&mut data, "Test123")?;
-    data.resize(len, 0);
 
     let packet = PacketCC::new(PayloadParamWrite::new(&[ParamWrite::new(
-        param.id(),
-        &data,
-    )]));
+        param,
+        b"User1234",
+    )?]));
     let mut conn = Connection::connect()?;
     conn.stream.set_read_timeout(Some(Duration::from_secs(2)))?;
     conn.send(&packet)?;
@@ -276,5 +272,6 @@ fn main() -> Result<()> {
     // read_dyn_params()?;
 
     write_param()?;
+    read_dyn_params()?;
     Ok(())
 }

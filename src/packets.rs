@@ -4,6 +4,9 @@ use binrw::{
 };
 use rhexdump::hexdump;
 
+use crate::opc_values::EncodeOpcValue;
+use crate::Parameter;
+
 use std::fmt::{Debug, Formatter};
 use std::io::{Read, Seek, Write};
 use std::time::Duration;
@@ -234,11 +237,11 @@ pub struct ParamWrite {
 }
 
 impl ParamWrite {
-    pub fn new(param_id: u32, data: &[u8]) -> Self {
-        Self {
-            param_id,
-            data: data.to_vec(),
-        }
+    pub fn new<T: EncodeOpcValue>(param: Parameter, data: T) -> Result<Self> {
+        Ok(Self {
+            param_id: param.id(),
+            data: data.opc_encode(&param.type_info())?,
+        })
     }
 }
 
