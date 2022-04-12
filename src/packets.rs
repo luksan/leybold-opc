@@ -1,7 +1,5 @@
 use anyhow::{Context, Result};
-use binrw::{
-    binread, binrw, binwrite, BinRead, BinReaderExt, BinResult, BinWrite, ReadOptions, WriteOptions,
-};
+use binrw::{binread, binrw, binwrite, BinRead, BinResult, BinWrite, ReadOptions, WriteOptions};
 use rhexdump::hexdump;
 
 use crate::opc_values::EncodeOpcValue;
@@ -75,13 +73,14 @@ impl BinRead for PacketCC<PayloadDynResponse> {
         args: Self::Args,
     ) -> BinResult<Self> {
         let hdr = PacketCCHeader::read_options(reader, options, ())?;
-        let payload = PayloadDynResponse::read_options(reader, options, args)?;
+        let payload = PayloadDynResponse::read_options(reader, options, (args,))?;
         let mut tail = Vec::new();
         reader.read_to_end(&mut tail)?;
         Ok(Self { hdr, payload, tail })
     }
 }
 
+// BinWrite can't be derived, since not all payloads implement BinWrite.
 impl<P: SendPayload> BinWrite for PacketCC<P> {
     type Args = ();
 
@@ -282,41 +281,23 @@ impl<const LEN: usize> Debug for Bstr<LEN> {
     }
 }
 
-#[derive(BinRead, Copy, Clone, Debug)]
-#[br(big)]
-pub struct ParamResponseHeader {
+#[binread]
+#[derive(Clone, Debug)]
+#[br(big, import(payload_lengths: Vec<usize>))]
+pub struct PayloadDynResponse {
     pub error_code: u16,
     #[br(map(|d:u32| Duration::from_millis(d as u64)))]
     pub timestamp: Duration,
-}
-
-pub struct PayloadDynResponse {
-    pub error_code: u16,
-    pub timestamp: Duration,
+    #[br(parse_with = |reader,_,()| parse_dyn_payload(reader, &payload_lengths))]
     pub data: Vec<Vec<u8>>,
 }
-
-impl BinRead for PayloadDynResponse {
-    type Args = Vec<usize>;
-
-    fn read_options<R: Read + Seek>(
-        reader: &mut R,
-        options: &ReadOptions,
-        args: Self::Args,
-    ) -> BinResult<Self> {
-        let hdr = ParamResponseHeader::read_options(reader, options, ())?;
-        let data = args
-            .iter()
-            .map(|&len| reader.read_be_args::<DynParam>((len,)).map(|p| p.0))
-            .collect::<BinResult<Vec<_>>>()?;
-        Ok(Self {
-            error_code: hdr.error_code,
-            timestamp: hdr.timestamp,
-            data,
-        })
-    }
+fn parse_dyn_payload<R: Read + Seek>(reader: &mut R, lengths: &[usize]) -> BinResult<Vec<Vec<u8>>> {
+    lengths
+        .iter()
+        .map(|len| DynParam::read_args(reader, (*len,)).map(|p| p.0))
+        .collect()
 }
 
 #[derive(BinRead, Clone, Debug)]
 #[br(big, import(len: usize), magic = 1u8)]
-pub struct DynParam(#[br(count = len)] Vec<u8>);
+struct DynParam(#[br(count = len)] Vec<u8>);
