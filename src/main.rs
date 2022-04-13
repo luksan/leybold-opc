@@ -8,10 +8,12 @@ use anyhow::{bail, Context, Result};
 use binrw::{io::Cursor, BinRead, BinReaderExt, BinWrite};
 use rhexdump::hexdump;
 
-use packets::{PacketCC, PacketCCHeader, PayloadSdbDownload, PayloadUnknown, ResponsePayload};
-
 use opc_values::Value;
-use packets::{ParamRead, ParamWrite, PayloadDynResponse, PayloadParamWrite, PayloadParamsRead};
+use packets::{
+    PacketCC, PacketCCHeader, ParamRead, ParamWrite, PayloadDynResponse, PayloadParamWrite,
+    PayloadParamsRead, PayloadSdbDownload, PayloadSdbVersionQuery, PayloadSdbVersionResponse,
+    PayloadUnknown, ResponsePayload,
+};
 use sdb::{Parameter, TypeInfo, TypeKind};
 
 use std::io::{Read, Write};
@@ -127,12 +129,22 @@ fn download_sbd() -> Result<()> {
             bail!("Received more than 1000 packets.")
         }
         println!("Pkt cnt {pkt_cnt} / 838.");
-        if r.payload.continues != 1 {
+        if r.payload.continues {
             break;
         }
         conn.send(&query_continue_download())?;
     }
     conn.send_66_ack()?;
+    Ok(())
+}
+
+fn check_sdb() -> Result<()> {
+    let mut conn = Connection::connect()?;
+    conn.send(&PacketCC::new(PayloadSdbVersionQuery::new()))?;
+    let r = conn.receive_response::<PayloadSdbVersionResponse>()?;
+    conn.send_66_ack()?;
+    println!("{r:?}\n{}", hexdump(&r.tail));
+
     Ok(())
 }
 

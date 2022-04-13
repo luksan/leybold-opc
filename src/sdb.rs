@@ -116,7 +116,10 @@ pub mod api {
 pub struct Sdb {
     #[br(magic = 1u32, temp)]
     hdr_len: u32,
-    hdr_data: [u32; 3],
+    #[br(magic = 1u32)]
+    /// Sent at the end of every parameter read packet
+    sdb_id: u32,
+    maybe_checksum: u32,
     /// Total size of the SDB in bytes
     total_sbd_size: u32,
     hdr_data_2: [u32; 3],
@@ -333,7 +336,7 @@ pub fn print_sdb_file() -> Result<()> {
     // entries.sort_by_key(|e| e.value_type);
     // entries.dedup_by_key(|e| e.value_type);
 
-    println!("Header data {:?}, {:?}", sdb.hdr_data, sdb.hdr_data_2);
+    println!("Header data {:?}, {:?}", sdb.maybe_checksum, sdb.hdr_data_2);
 
     for t in &sdb.type_descr {
         // println!("{t:?}");

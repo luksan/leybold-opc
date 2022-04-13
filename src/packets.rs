@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Result};
 use binrw::{binread, binrw, binwrite, BinRead, BinResult, BinWrite, ReadOptions, WriteOptions};
 use rhexdump::hexdump;
 
@@ -9,8 +9,8 @@ use std::fmt::{Debug, Formatter};
 use std::io::{Read, Seek, Write};
 use std::time::Duration;
 
-#[derive(Copy, Clone, Debug, PartialEq, Default)]
 #[binrw]
+#[derive(Copy, Clone, Debug, PartialEq, Default)]
 #[br(big, magic = 0xCCCC0001u32)]
 #[bw(big, magic = 0xCCCC0001u32)]
 pub struct PacketCCHeader {
@@ -134,33 +134,59 @@ impl<T: AsRef<[u8]>> From<T> for PayloadUnknown {
     }
 }
 
-#[derive(Clone, PartialEq)]
-#[binrw]
-#[br(big, import(hdr: PacketCCHeader))]
+#[binwrite]
+#[derive(Clone, Debug)]
+#[bw(big, magic = 0x34u8)]
+pub struct PayloadSdbVersionQuery {
+    x: &'static [u8],
+}
+
+impl PayloadSdbVersionQuery {
+    pub fn new() -> Self {
+        Self {
+            x: b"\0\0\x0eDOWNLOAD.SDB\0\0",
+        }
+    }
+}
+
+impl SendPayload for PayloadSdbVersionQuery {
+    fn len(&self) -> u16 {
+        Self::new().x.len() as u16 + 1
+    }
+}
+
+#[binread]
+#[derive(Clone, Debug)]
+#[br(big, import(_hdr:PacketCCHeader))]
+pub struct PayloadSdbVersionResponse {
+    error_code: u16,
+    sbd_size: u32,
+    // The remaining bytes are unknown
+}
+
+impl ResponsePayload for PayloadSdbVersionResponse {}
+
+#[binread]
+#[derive(Clone)]
+#[br(big, import(_hdr: PacketCCHeader))]
 pub struct PayloadSdbDownload {
-    pub continues: u32, // 0 if this is the last packet, 1 otherwise
+    #[br(try_map(|x:u32|match x {0 => Ok(false), 1 => Ok(true), _ => Err(anyhow!("Unexpected in continues field."))}))]
+    pub continues: bool, // 0 if this is the last packet, 1 otherwise
+    #[br(temp)]
     pub sdb_len: u16,
     #[br(count = sdb_len)]
     pub sdb_part: Vec<u8>,
-    #[br(count = (hdr.payload_len - 4 - 2 - sdb_len) as usize)]
-    pub tail: Vec<u8>,
 }
 
-impl SendPayload for PayloadSdbDownload {
-    fn len(&self) -> u16 {
-        4 + self.tail.len() as u16
-    }
-}
 impl ResponsePayload for PayloadSdbDownload {}
 
 impl Debug for PayloadSdbDownload {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "PayloadSdbDownload {{\n continues: {},\n{}\ntail: {:x?}}}",
+            "PayloadSdbDownload {{\n continues: {},\n{}}}",
             self.continues,
             hexdump(&self.sdb_part[0..100]),
-            &self.tail,
         )
     }
 }
