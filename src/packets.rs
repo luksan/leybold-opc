@@ -46,9 +46,8 @@ where
     pub payload: Payload,
     pub tail: Vec<u8>,
 }
-pub trait ResponsePayload: BinRead<Args = (PacketCCHeader,)> {}
 
-impl<P: ResponsePayload> BinRead for PacketCC<P> {
+impl<P: BinRead<Args = (PacketCCHeader,)>> BinRead for PacketCC<P> {
     type Args = ();
 
     fn read_options<R: Read + Seek>(
@@ -120,8 +119,6 @@ pub struct PayloadUnknown {
     pub data: Vec<u8>,
 }
 
-impl ResponsePayload for PayloadUnknown {}
-
 impl<T: AsRef<[u8]>> From<T> for PayloadUnknown {
     fn from(d: T) -> Self {
         Self {
@@ -154,8 +151,6 @@ pub struct PayloadSdbVersionResponse {
     // The remaining bytes are unknown
 }
 
-impl ResponsePayload for PayloadSdbVersionResponse {}
-
 #[binread]
 #[derive(Clone)]
 #[br(big, import(_hdr: PacketCCHeader))]
@@ -167,8 +162,6 @@ pub struct PayloadSdbDownload {
     #[br(count = sdb_len)]
     pub sdb_part: Vec<u8>,
 }
-
-impl ResponsePayload for PayloadSdbDownload {}
 
 impl Debug for PayloadSdbDownload {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {

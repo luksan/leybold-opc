@@ -12,7 +12,7 @@ use opc_values::Value;
 use packets::{
     PacketCC, PacketCCHeader, ParamRead, ParamWrite, PayloadDynResponse, PayloadParamWrite,
     PayloadParamsRead, PayloadSdbDownload, PayloadSdbVersionQuery, PayloadSdbVersionResponse,
-    PayloadUnknown, ResponsePayload,
+    PayloadUnknown,
 };
 use sdb::{Parameter, TypeInfo, TypeKind};
 
@@ -64,7 +64,10 @@ impl Connection {
             .context("Write to TCP stream failed.")
     }
 
-    fn receive_response<P: ResponsePayload>(&mut self) -> Result<PacketCC<P>> {
+    fn receive_response<P>(&mut self) -> Result<PacketCC<P>>
+    where
+        PacketCC<P>: BinRead<Args = ()>,
+    {
         self.receive_response_args(())
     }
 
