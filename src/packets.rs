@@ -6,33 +6,33 @@ use crate::opc_values::EncodeOpcValue;
 use crate::Parameter;
 
 use std::fmt::{Debug, Formatter};
-use std::io::{Read, Seek, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::time::Duration;
 
 #[binrw]
 #[derive(Copy, Clone, Debug, PartialEq, Default)]
 #[br(big, magic = 0xCCCC0001u32)]
-#[bw(big, magic = 0xCCCC0001u32)]
+#[bw(big, magic = 0xCCCC0001u32, import (payload_len_wr: u16))]
 pub struct PacketCCHeader {
     pub u16_zero: u16,
-    pub payload_len: u16,            // total packet len - 24
+    #[bw(map =|_| payload_len_wr)]
+    /// Transmission length minus header
+    pub payload_len: u16,
     pub u64_8_f: u64,                // 0?
     pub one_if_data_poll_maybe: u32, // 0 or 1
     pub u8_14: u8,                   // 0
-    pub len2: u16,                   // received len in response, payload_len in command
-    pub b17: u8,                     // 0x23 in command, 0x27 in response
+    #[bw(map =|_| payload_len_wr)]
+    /// received len in response, payload_len in command
+    pub len2: u16,
+    /// 0x23 in command, 0x27 in response
+    pub b17: u8,
 }
 
 impl PacketCCHeader {
-    pub fn new_cmd(len: u16) -> Self {
+    pub fn new_cmd() -> Self {
         Self {
-            u16_zero: 0,
-            payload_len: len,
-            u64_8_f: 0,
-            one_if_data_poll_maybe: 0,
-            u8_14: 0,
-            len2: len,
             b17: 0x23,
+            ..Self::default()
         }
     }
 }
@@ -81,7 +81,7 @@ impl BinRead for PacketCC<PayloadDynResponse> {
 }
 
 // BinWrite can't be derived, since not all payloads implement BinWrite.
-impl<P: SendPayload> BinWrite for PacketCC<P> {
+impl<P: BinWrite<Args = ()>> BinWrite for PacketCC<P> {
     type Args = ();
 
     fn write_options<W: Write + Seek>(
@@ -90,24 +90,26 @@ impl<P: SendPayload> BinWrite for PacketCC<P> {
         options: &WriteOptions,
         _args: Self::Args,
     ) -> BinResult<()> {
-        self.hdr.write_options(writer, options, ())?;
-        self.payload.write_options(writer, options, ())
+        let hdr_start = writer.stream_position()?;
+        self.hdr.write_options(writer, options, (0,))?;
+        let payload_start = writer.stream_position()?;
+        self.payload.write_options(writer, options, ())?;
+        let len: u16 = (writer.stream_position()? - payload_start)
+            .try_into()
+            .expect("Payload length too big.");
+        writer.seek(SeekFrom::Start(hdr_start))?;
+        self.hdr.write_options(writer, options, (len,))
     }
 }
 
-impl<P: SendPayload> PacketCC<P> {
+impl<P: BinWrite> PacketCC<P> {
     pub fn new(payload: P) -> Self {
-        let len = payload.len() as u16;
         Self {
-            hdr: PacketCCHeader::new_cmd(len),
+            hdr: PacketCCHeader::new_cmd(),
             payload,
             tail: vec![],
         }
     }
-}
-
-pub trait SendPayload: BinWrite<Args = ()> {
-    fn len(&self) -> u16;
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -116,12 +118,6 @@ pub trait SendPayload: BinWrite<Args = ()> {
 pub struct PayloadUnknown {
     #[br(count = hdr.payload_len)]
     pub data: Vec<u8>,
-}
-
-impl SendPayload for PayloadUnknown {
-    fn len(&self) -> u16 {
-        self.data.len() as u16
-    }
 }
 
 impl ResponsePayload for PayloadUnknown {}
@@ -146,12 +142,6 @@ impl PayloadSdbVersionQuery {
         Self {
             x: b"\0\0\x0eDOWNLOAD.SDB\0\0",
         }
-    }
-}
-
-impl SendPayload for PayloadSdbVersionQuery {
-    fn len(&self) -> u16 {
-        Self::new().x.len() as u16 + 1
     }
 }
 
@@ -212,12 +202,6 @@ impl PayloadParamsRead {
     }
 }
 
-impl SendPayload for PayloadParamsRead {
-    fn len(&self) -> u16 {
-        self.params.len() as u16 * (2 + 4 + 4) + 2 + 4 + 4
-    }
-}
-
 /// Instructs the instrument to change the value of the given parameters.
 #[binwrite]
 #[derive(Clone, Debug)]
@@ -236,17 +220,6 @@ impl PayloadParamWrite {
             params: params.to_vec(),
             end: (),
         }
-    }
-}
-
-impl SendPayload for PayloadParamWrite {
-    fn len(&self) -> u16 {
-        let params: u16 = self
-            .params
-            .iter()
-            .map(|p| 2 + 4 + p.data.len() as u16)
-            .sum();
-        2 + 4 + params + 4
     }
 }
 
