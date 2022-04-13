@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use anyhow::{Context, Result};
 use arrayvec::ArrayVec;
 use binrw::{binread, BinRead, BinReaderExt, BinResult, Endian, ReadOptions, VecArgs};

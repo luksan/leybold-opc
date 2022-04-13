@@ -1,20 +1,17 @@
 #![allow(dead_code, unused_mut)]
 
-mod opc_values;
-mod packets;
-mod sdb;
-
 use anyhow::{bail, Context, Result};
 use binrw::{io::Cursor, BinRead, BinReaderExt, BinWrite};
+use clap::{CommandFactory, ErrorKind as ClapError, Parser, Subcommand};
 use rhexdump::hexdump;
 
-use opc_values::Value;
-use packets::{
+use leybold_opc_rs::opc_values::Value;
+use leybold_opc_rs::packets::{
     PacketCC, PacketCCHeader, ParamRead, ParamWrite, PayloadDynResponse, PayloadParamWrite,
     PayloadParamsRead, PayloadSdbDownload, PayloadSdbVersionQuery, PayloadSdbVersionResponse,
     PayloadUnknown,
 };
-use sdb::{Parameter, TypeInfo, TypeKind};
+use leybold_opc_rs::sdb::{self, Parameter};
 
 use std::io::{Read, Write};
 use std::net::{IpAddr, TcpStream};
@@ -255,8 +252,6 @@ fn write_param(conn: &mut Connection) -> Result<()> {
     r?;
     Ok(())
 }
-
-use clap::{CommandFactory, ErrorKind as ClapError, Parser, Subcommand};
 
 #[derive(Parser)]
 #[clap(author = "Lukas Sandström", version, about)]

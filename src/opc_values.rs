@@ -1,4 +1,5 @@
-use crate::{TypeInfo, TypeKind};
+use crate::sdb::{TypeInfo, TypeKind};
+
 use anyhow::{anyhow, bail, Context, Result};
 use binrw::BinReaderExt;
 use std::fmt::{Debug, Formatter};
@@ -43,7 +44,7 @@ impl Debug for Value {
 }
 
 impl Value {
-    pub(crate) fn parse(data: &[u8], param: &TypeInfo) -> Result<Self> {
+    pub fn parse(data: &[u8], param: &TypeInfo) -> Result<Self> {
         let mut cur = Cursor::new(data);
         Self::parse_param(&mut cur, param)
     }

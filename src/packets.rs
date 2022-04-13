@@ -1,9 +1,11 @@
+#![allow(dead_code)]
+
 use anyhow::{anyhow, Result};
 use binrw::{binread, binrw, binwrite, BinRead, BinResult, BinWrite, ReadOptions, WriteOptions};
 use rhexdump::hexdump;
 
 use crate::opc_values::EncodeOpcValue;
-use crate::Parameter;
+use crate::sdb::Parameter;
 
 use std::fmt::{Debug, Formatter};
 use std::io::{Read, Seek, SeekFrom, Write};
