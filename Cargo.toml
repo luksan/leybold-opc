@@ -8,7 +8,11 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.56"
+arrayvec = "0.7.2"
 binrw = "0.8.4"
 clap = { version = "3.1.8" , features = ["derive"] }
 hex-literal = "0.3.4"
 rhexdump = "0.1.1"
+
+[profile.release]
+debug = true

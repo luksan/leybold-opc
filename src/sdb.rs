@@ -1,7 +1,8 @@
 use anyhow::{Context, Result};
-use binrw::{binread, BinRead, BinReaderExt, BinResult, Endian, NullString, ReadOptions, VecArgs};
-
+use arrayvec::ArrayVec;
+use binrw::{binread, BinRead, BinReaderExt, BinResult, Endian, ReadOptions, VecArgs};
 use rhexdump::hexdump;
+
 use std::fmt::{Debug, Formatter};
 use std::io::{Read, Seek};
 
@@ -10,6 +11,7 @@ pub use api::*;
 pub mod api {
     use super::*;
     pub use super::{Sdb, TypeKind};
+    use std::io::Cursor;
 
     #[derive(Copy, Clone)]
     pub struct Parameter<'a> {
@@ -105,8 +107,9 @@ pub mod api {
     }
 
     pub fn read_sdb_file() -> Result<Sdb> {
-        let mut file = std::io::BufReader::new(std::fs::File::open("sdb.dat")?);
-        Sdb::read(&mut file).context("Failed to parse SDB file.")
+        let mut file = Vec::with_capacity(1000_000);
+        std::fs::File::open("sdb.dat")?.read_to_end(&mut file)?;
+        Sdb::read(&mut Cursor::new(file)).context("Failed to parse SDB file.")
     }
 }
 
@@ -297,24 +300,40 @@ impl Debug for SdbParam {
     }
 }
 
-#[derive(BinRead, Clone, PartialEq)]
+#[binread]
+#[derive(Clone, PartialEq)]
 #[br(little)]
 struct SdbStr {
     len: u16,
-    #[br(align_after = 4)]
-    s: NullString,
+    #[br(args(len), parse_with = parse_arrayvec)]
+    s: ArrayVec<u8, 81>,
+}
+
+fn parse_arrayvec<R: Read + Seek>(
+    reader: &mut R,
+    _opts: &ReadOptions,
+    args: (u16,),
+) -> BinResult<ArrayVec<u8, 81>> {
+    assert!(args.0 <= 81);
+    let mut x = ArrayVec::from([0; 81]);
+    x.truncate(args.0 as usize);
+    reader.read_exact(&mut x)?;
+    if let Some(len) = x.iter().position(|&b| b == 0) {
+        x.truncate(len);
+    }
+    Ok(x)
 }
 
 impl SdbStr {
     pub fn try_as_str(&self) -> Result<&str> {
-        std::str::from_utf8(self.s.0.as_slice())
+        std::str::from_utf8(self.s.as_slice())
             .with_context(|| format!("SdbStr is not valid utf-8: {:?}", self.s))
     }
 }
 
 impl Debug for SdbStr {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let s = std::str::from_utf8(self.s.0.as_slice()).unwrap();
+        let s = std::str::from_utf8(self.s.as_slice()).unwrap();
         if let Some(width) = f.width() {
             let width = width.saturating_sub(s.len() + 2);
             write!(f, "\"{}\"{:width$}", s, "")
