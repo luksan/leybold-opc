@@ -317,11 +317,12 @@ fn parse_arrayvec<R: Read + Seek>(
     args: (u16,),
 ) -> BinResult<ArrayVec<u8, 81>> {
     assert!(args.0 <= 81);
+    let len = args.0 as usize;
     let mut x = ArrayVec::from([0; 81]);
-    x.truncate(args.0 as usize);
+    x.truncate(len);
     reader.read_exact(&mut x)?;
-    if let Some(len) = x.iter().position(|&b| b == 0) {
-        x.truncate(len);
+    while Some(&0) == x.last() {
+        x.pop();
     }
     Ok(x)
 }
