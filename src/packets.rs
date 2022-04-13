@@ -47,24 +47,14 @@ where
     pub tail: Vec<u8>,
 }
 
-impl<P: BinRead<Args = (PacketCCHeader,)>> BinRead for PacketCC<P> {
-    type Args = ();
-
-    fn read_options<R: Read + Seek>(
-        reader: &mut R,
-        options: &ReadOptions,
-        _args: Self::Args,
-    ) -> BinResult<Self> {
-        let hdr = PacketCCHeader::read_options(reader, options, ())?;
-        let payload = P::read_options(reader, options, (hdr,))?;
-        let mut tail = Vec::new();
-        reader.read_to_end(&mut tail)?;
-        Ok(Self { hdr, payload, tail })
-    }
+#[derive(Clone)]
+pub struct ReadArgs<T: Clone> {
+    hdr: PacketCCHeader,
+    args: T,
 }
 
-impl BinRead for PacketCC<PayloadDynResponse> {
-    type Args = Vec<usize>;
+impl<P: BinRead<Args = ReadArgs<Args>>, Args: Clone> BinRead for PacketCC<P> {
+    type Args = Args;
 
     fn read_options<R: Read + Seek>(
         reader: &mut R,
@@ -72,7 +62,7 @@ impl BinRead for PacketCC<PayloadDynResponse> {
         args: Self::Args,
     ) -> BinResult<Self> {
         let hdr = PacketCCHeader::read_options(reader, options, ())?;
-        let payload = PayloadDynResponse::read_options(reader, options, (args,))?;
+        let payload = P::read_options(reader, options, ReadArgs { hdr, args })?;
         let mut tail = Vec::new();
         reader.read_to_end(&mut tail)?;
         Ok(Self { hdr, payload, tail })
@@ -113,9 +103,9 @@ impl<P: BinWrite> PacketCC<P> {
 
 #[derive(Clone, Debug, PartialEq)]
 #[binrw]
-#[br(big, import (hdr: PacketCCHeader))]
+#[br(big, import_raw(arg: ReadArgs<()>))]
 pub struct PayloadUnknown {
-    #[br(count = hdr.payload_len)]
+    #[br(count = arg.hdr.payload_len)]
     pub data: Vec<u8>,
 }
 
@@ -144,7 +134,7 @@ impl PayloadSdbVersionQuery {
 
 #[binread]
 #[derive(Clone, Debug)]
-#[br(big, import(_hdr:PacketCCHeader))]
+#[br(big, import_raw(_hdr:ReadArgs<()>))]
 pub struct PayloadSdbVersionResponse {
     error_code: u16,
     sbd_size: u32,
@@ -153,7 +143,7 @@ pub struct PayloadSdbVersionResponse {
 
 #[binread]
 #[derive(Clone)]
-#[br(big, import(_hdr: PacketCCHeader))]
+#[br(big, import_raw(_hdr: ReadArgs<()>))]
 pub struct PayloadSdbDownload {
     #[br(try_map(|x:u32|match x {0 => Ok(false), 1 => Ok(true), _ => Err(anyhow!("Unexpected in continues field."))}))]
     pub continues: bool, // 0 if this is the last packet, 1 otherwise
@@ -176,7 +166,7 @@ impl Debug for PayloadSdbDownload {
 
 #[binwrite]
 #[derive(Clone, Debug)]
-#[br(big, import(_hdr: PacketCCHeader))]
+#[br(big, import(_args: ReadArgs<()>))]
 #[bw(big, magic = 0x2e00u16)]
 pub struct PayloadParamsRead {
     #[bw(calc = params.len() as u32)]
@@ -254,12 +244,13 @@ impl ParamRead {
 
 #[binread]
 #[derive(Clone, Debug)]
-#[br(big, import(payload_lengths: Vec<usize>))]
+#[br(big, import_raw(read_args: ReadArgs<Vec<usize>>))]
+/// The read argument is a Vec<usize> with the response length of each parameter.
 pub struct PayloadDynResponse {
     pub error_code: u16,
     #[br(map(|d:u32| Duration::from_millis(d as u64)))]
     pub timestamp: Duration,
-    #[br(parse_with = |reader,_,()| parse_dyn_payload(reader, &payload_lengths))]
+    #[br(parse_with = |reader,_,()| parse_dyn_payload(reader, &read_args.args))]
     pub data: Vec<Vec<u8>>,
 }
 fn parse_dyn_payload<R: Read + Seek>(reader: &mut R, lengths: &[usize]) -> BinResult<Vec<Vec<u8>>> {
