@@ -17,7 +17,7 @@ use packets::{
 use sdb::{Parameter, TypeInfo, TypeKind};
 
 use std::io::{Read, Write};
-use std::net::TcpStream;
+use std::net::{IpAddr, TcpStream};
 use std::ops::Deref;
 use std::time::Duration;
 
@@ -45,9 +45,16 @@ struct Connection {
 }
 
 impl Connection {
-    fn connect() -> Result<Self> {
-        let stream = TcpStream::connect("192.168.1.51:1202").context("Failed to connect to PLC")?;
+    pub fn connect(ip: IpAddr) -> Result<Self> {
+        let stream = TcpStream::connect((ip, 1202)).context("Failed to connect to PLC")?;
         Ok(Self { stream })
+    }
+
+    pub fn query(&mut self, pkt: &PacketCC) -> Result<PacketCC> {
+        self.send(pkt)?;
+        let r = self.receive_response();
+        self.send_66_ack()?;
+        r
     }
 
     fn send<P>(&mut self, pkt: &P) -> Result<()>
@@ -110,14 +117,7 @@ impl Connection {
     }
 }
 
-fn query(pkt: &PacketCC) -> Result<PacketCC> {
-    let mut conn = Connection::connect()?;
-    conn.send(pkt)?;
-    conn.receive_response()
-}
-
-fn download_sbd() -> Result<()> {
-    let mut conn = Connection::connect()?;
+fn download_sbd(conn: &mut Connection) -> Result<()> {
     let mut sdb_file = std::fs::File::create("sdb_new.dat")?;
     let mut pkt_cnt = 0;
     conn.send(&query_download_sdb())?;
@@ -141,8 +141,7 @@ fn download_sbd() -> Result<()> {
     Ok(())
 }
 
-fn check_sdb() -> Result<()> {
-    let mut conn = Connection::connect()?;
+fn check_sdb(conn: &mut Connection) -> Result<()> {
     conn.send(&PacketCC::new(PayloadSdbVersionQuery::new()))?;
     let r = conn.receive_response::<PayloadSdbVersionResponse>()?;
     conn.send_66_ack()?;
@@ -151,14 +150,13 @@ fn check_sdb() -> Result<()> {
     Ok(())
 }
 
-fn poll_pressure() -> Result<()> {
+fn poll_pressure(conn: &mut Connection) -> Result<()> {
     let mut param_set = ParamQuerySet::default();
     let sdb = sdb::read_sdb_file()?;
     param_set.add_param(sdb.param_by_name(".Gauge[1].Parameter[1].Value")?);
 
     let mut last_timestamp = 0.0;
     let mut last_time = std::time::Instant::now();
-    let mut conn = Connection::connect()?;
     conn.stream.set_read_timeout(Some(Duration::from_secs(2)))?;
 
     let pkt = param_set.create_query_packet();
@@ -219,14 +217,13 @@ impl<'a> ParamQuerySet<'a> {
     }
 }
 
-fn read_dyn_params() -> Result<()> {
+fn read_dyn_params(conn: &mut Connection) -> Result<()> {
     let sdb = sdb::read_sdb_file()?;
     let mut param_set = ParamQuerySet::default();
     param_set.add_param(sdb.param_by_name(".CockpitUser")?);
     // param_set.add_param(sdb.param_by_name(".Gauge[1].Parameter[1].Value")?);
     // param_set.add_param(sdb.param_by_name(".Gauge[1].Parameter[1].StringValue")?);
 
-    let mut conn = Connection::connect()?;
     conn.stream.set_read_timeout(Some(Duration::from_secs(2)))?;
 
     conn.send(&param_set.create_query_packet())?;
@@ -242,7 +239,7 @@ fn read_dyn_params() -> Result<()> {
     Ok(())
 }
 
-fn write_param() -> Result<()> {
+fn write_param(conn: &mut Connection) -> Result<()> {
     let sdb = sdb::read_sdb_file()?;
     let param = sdb.param_by_name(".CockpitUser")?;
 
@@ -250,7 +247,6 @@ fn write_param() -> Result<()> {
         param,
         b"User1234",
     )?]));
-    let mut conn = Connection::connect()?;
     conn.stream.set_read_timeout(Some(Duration::from_secs(2)))?;
     conn.send(&packet)?;
     let r = conn.receive_response::<PayloadUnknown>();
@@ -260,18 +256,49 @@ fn write_param() -> Result<()> {
     Ok(())
 }
 
+use clap::{CommandFactory, ErrorKind as ClapError, Parser, Subcommand};
+
+#[derive(Parser)]
+#[clap(author = "Lukas Sandström", version, about)]
+struct CmdlineArgs {
+    /// The IP address of the Vacvision unit.
+    ip: Option<IpAddr>,
+    #[clap(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    PollPressure,
+    SdbDownload,
+    SdbPrint,
+    Test,
+}
+
 fn main() -> Result<()> {
-    // let pkt = query_download_sdb();
-    // let pkt = query_fw_ver();
-    // let r = query(&pkt)?;
-    // let r = download_sbd()?;
-    // println!("{:x?}", r);
+    let args: CmdlineArgs = Parser::parse();
 
-    // sdb::print_sdb_file()?;
-    //poll_pressure()?;
-    // read_dyn_params()?;
+    let conn: &mut _ = &mut None;
+    macro_rules! connect {
+        () => {{
+            let ip = args.ip.unwrap_or_else(|| {
+                CmdlineArgs::command()
+                    .error(ClapError::ArgumentNotFound, "Missing IP address.")
+                    .exit()
+            });
+            *conn = Some(Connection::connect(ip).expect("Connection failed"));
+            conn.as_mut().unwrap()
+        }};
+    }
 
-    write_param()?;
-    read_dyn_params()?;
-    Ok(())
+    match &args.command {
+        Commands::PollPressure => poll_pressure(connect!()),
+        Commands::SdbDownload => download_sbd(connect!()),
+        Commands::SdbPrint => sdb::print_sdb_file(),
+        Commands::Test => {
+            let conn = connect!();
+            write_param(conn)?;
+            read_dyn_params(conn)
+        }
+    }
 }
