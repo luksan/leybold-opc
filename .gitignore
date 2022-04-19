@@ -1,3 +1,7 @@
 /.idea
 /target
 
+/flamegraph.svg
+/perf.data*
+
+/sdb_new.dat

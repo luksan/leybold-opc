@@ -49,7 +49,7 @@ impl Value {
         Self::parse_param(&mut cur, param)
     }
 
-    fn parse_param(mut cur: &mut Cursor<&[u8]>, param: &TypeInfo) -> Result<Self> {
+    fn parse_param(cur: &mut Cursor<&[u8]>, param: &TypeInfo) -> Result<Self> {
         let start_pos = cur.position();
         macro_rules! int {
             ($ty:ty) => {{
@@ -73,7 +73,7 @@ impl Value {
                     [len, 0] => {
                         let mut v = Vec::with_capacity(len);
                         for _ in 0..len {
-                            v.push(Self::parse_param(&mut cur, &ty)?);
+                            v.push(Self::parse_param(cur, &ty)?);
                         }
                         Value::Array(v)
                     }
@@ -87,7 +87,7 @@ impl Value {
                 let mut ret = Vec::with_capacity(info.len());
                 for m in info {
                     let name = m.name.to_string();
-                    let value = Self::parse_param(&mut cur, &m.type_info)?;
+                    let value = Self::parse_param(cur, &m.type_info)?;
                     ret.push((name, value));
                 }
                 Value::Struct(ret)

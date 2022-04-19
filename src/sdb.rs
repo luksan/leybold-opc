@@ -109,7 +109,7 @@ pub mod api {
     }
 
     pub fn read_sdb_file() -> Result<Sdb> {
-        let mut file = Vec::with_capacity(1000_000);
+        let mut file = Vec::new();
         std::fs::File::open("sdb.dat")?.read_to_end(&mut file)?;
         Sdb::read(&mut Cursor::new(file)).context("Failed to parse SDB file.")
     }
