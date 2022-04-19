@@ -1,6 +1,6 @@
 use crate::sdb::{TypeInfo, TypeKind};
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, bail, Result};
 use binrw::{BinRead, BinReaderExt, BinResult, ReadOptions};
 
 use std::fmt::{Debug, Formatter};
@@ -45,12 +45,12 @@ impl Debug for Value {
 }
 
 impl Value {
-    pub fn parse(data: &[u8], param: &TypeInfo) -> Result<Self> {
+    pub fn parse(data: &[u8], param: &TypeInfo) -> BinResult<Self> {
         let mut cur = Cursor::new(data);
         Self::parse_param(&mut cur, param)
     }
 
-    fn parse_param(cur: &mut Cursor<&[u8]>, param: &TypeInfo) -> Result<Self> {
+    fn parse_param(cur: &mut Cursor<&[u8]>, param: &TypeInfo) -> BinResult<Self> {
         let start_pos = cur.position();
         macro_rules! int {
             ($ty:ty) => {{
@@ -79,7 +79,7 @@ impl Value {
                         Value::Array(v)
                     }
                     [_a, _b] => {
-                        unimplemented!("Have to check the order the elements are stored.")
+                        todo!("Have to check the order the elements are stored.")
                     }
                 }
             }
@@ -108,8 +108,7 @@ impl Value {
             TypeKind::Time => int!(u32),
             TypeKind::String => {
                 let mut v = vec![0; param.response_len()];
-                cur.read_exact(v.as_mut_slice())
-                    .context("Failed to read string from buffer.")?;
+                cur.read_exact(v.as_mut_slice())?;
                 if let Some(nul_pos) = v.iter().position(|&b| b == 0) {
                     v.truncate(nul_pos);
                 }
@@ -130,10 +129,7 @@ impl BinRead for Value {
     ) -> BinResult<Self> {
         let mut buf = vec![0; args.response_len()];
         reader.read_exact(buf.as_mut_slice())?;
-        Self::parse(&mut buf, &args).map_err(|e| binrw::Error::Custom {
-            pos: 0,
-            err: Box::new(e),
-        })
+        Self::parse(&buf, &args)
     }
 }
 
