@@ -39,8 +39,8 @@ pub mod api {
 
         pub fn type_info(&self) -> TypeInfo {
             TypeInfo {
-                sdb: &*self.sdb,
-                descr: &self.sdb.type_descr[self.descr],
+                sdb: self.sdb.clone(),
+                descr: self.descr,
             }
         }
 
@@ -56,45 +56,50 @@ pub mod api {
         }
     }
 
-    #[derive(Copy, Clone, Debug)]
-    pub struct TypeInfo<'a> {
-        sdb: &'a Sdb,
-        descr: &'a TypeDescription,
+    #[derive(Clone, Debug)]
+    pub struct TypeInfo {
+        sdb: Rc<Sdb>,
+        descr: usize,
     }
 
-    impl<'a> TypeInfo<'a> {
-        fn new(sdb: &'a Sdb, idx: u32) -> Result<Self> {
-            let descr = sdb.get_desc(idx)?;
-            Ok(Self { sdb, descr })
+    impl TypeInfo {
+        fn new(sdb: Rc<Sdb>, idx: u32) -> Self {
+            let descr = idx as usize;
+            Self { sdb, descr }
         }
+
+        fn descr(&self) -> &TypeDescription {
+            &self.sdb.type_descr[self.descr]
+        }
+
         pub fn kind(&self) -> TypeKind {
-            self.descr.kind
+            self.descr().kind
         }
 
         pub fn response_len(&self) -> usize {
-            self.descr.type_size as usize
+            self.descr().type_size as usize
         }
 
         pub fn array_info(&self) -> Option<(TypeInfo, [usize; 2])> {
-            if let TypeDescPayload::Array(ref arr) = self.descr.payload {
+            if let TypeDescPayload::Array(ref arr) = self.descr().payload {
                 let mut dims = [0; 2];
                 for d in 0..arr.dims.len() {
                     let x = arr.dims[d];
                     dims[d] = (x.1 - x.0 + 1) as usize;
                 }
-                Some((TypeInfo::new(self.sdb, arr.type_idx).ok()?, dims))
+                Some((Self::new(self.sdb.clone(), arr.type_idx), dims))
             } else {
                 None
             }
         }
         pub fn struct_info(&self) -> Option<Vec<StructMemberInfo>> {
-            if let TypeDescPayload::Struct(ref v) = self.descr.payload {
+            if let TypeDescPayload::Struct(ref v) = self.descr().payload {
                 Some(
                     v.iter()
                         .map(|m| {
                             Some(StructMemberInfo {
                                 name: m.name.try_as_str().ok()?,
-                                type_info: Self::new(self.sdb, m.type_descr_idx).ok()?,
+                                type_info: Self::new(self.sdb.clone(), m.type_descr_idx),
                             })
                         })
                         .collect::<Option<Vec<_>>>()?,
@@ -105,10 +110,10 @@ pub mod api {
         }
     }
 
-    #[derive(Copy, Clone, Debug)]
+    #[derive(Clone, Debug)]
     pub struct StructMemberInfo<'a> {
         pub name: &'a str,
-        pub type_info: TypeInfo<'a>,
+        pub type_info: TypeInfo,
     }
 
     pub fn read_sdb_file() -> Result<Rc<Sdb>> {
