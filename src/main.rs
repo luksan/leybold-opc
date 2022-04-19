@@ -175,10 +175,10 @@ fn poll_pressure(conn: &mut Connection) -> Result<()> {
     }
 }
 #[derive(Debug, Default, Clone)]
-struct ParamQuerySet<'a>(Vec<Parameter<'a>>);
+struct ParamQuerySet(Vec<Parameter>);
 
-impl<'a> ParamQuerySet<'a> {
-    pub fn add_param(&mut self, param: Parameter<'a>) {
+impl ParamQuerySet {
+    pub fn add_param(&mut self, param: Parameter) {
         self.0.push(param);
     }
 

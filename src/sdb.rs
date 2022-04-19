@@ -1,12 +1,13 @@
 #![allow(dead_code)]
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use arrayvec::ArrayVec;
 use binrw::{binread, BinRead, BinReaderExt, BinResult, Endian, ReadOptions, VecArgs};
 use rhexdump::hexdump;
 
 use std::fmt::{Debug, Formatter};
 use std::io::{Read, Seek};
+use std::rc::Weak;
 
 pub use api::*;
 
@@ -14,40 +15,42 @@ pub mod api {
     use super::*;
     pub use super::{Sdb, TypeKind};
     use std::io::Cursor;
+    use std::rc::Rc;
 
-    #[derive(Copy, Clone)]
-    pub struct Parameter<'a> {
-        sdb: &'a Sdb,
-        param: &'a SdbParam,
-        descr: &'a TypeDescription,
+    #[derive(Clone)]
+    pub struct Parameter {
+        sdb: Rc<Sdb>,
+        param: usize,
+        descr: usize,
     }
 
-    impl<'a> Parameter<'a> {
-        pub(super) fn new(sdb: &'a Sdb, param: &'a SdbParam, descr: &'a TypeDescription) -> Self {
+    impl Parameter {
+        pub(super) fn new(sdb: Rc<Sdb>, param: usize, descr: usize) -> Self {
             Self { sdb, param, descr }
         }
 
         pub fn name(&self) -> &str {
-            self.param.name.try_as_str().unwrap()
+            self.sdb.parameters[self.param].name.try_as_str().unwrap()
         }
+
         pub fn id(&self) -> u32 {
-            self.param.id
+            self.sdb.parameters[self.param].id
         }
 
         pub fn type_info(&self) -> TypeInfo {
             TypeInfo {
-                sdb: self.sdb,
-                descr: self.descr,
+                sdb: &*self.sdb,
+                descr: &self.sdb.type_descr[self.descr],
             }
         }
 
         /// Returns a TypeKind enum value, describing the data type of the parameter.
         pub fn value_kind(&self) -> TypeKind {
-            self.descr.kind
+            self.sdb.type_descr[self.descr].kind
         }
     }
 
-    impl Debug for Parameter<'_> {
+    impl Debug for Parameter {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
             write!(f, "Parameter<{}>", self.name())
         }
@@ -108,10 +111,14 @@ pub mod api {
         pub type_info: TypeInfo<'a>,
     }
 
-    pub fn read_sdb_file() -> Result<Sdb> {
+    pub fn read_sdb_file() -> Result<Rc<Sdb>> {
         let mut file = Vec::new();
         std::fs::File::open("sdb.dat")?.read_to_end(&mut file)?;
-        Sdb::read(&mut Cursor::new(file)).context("Failed to parse SDB file.")
+        let mut sdb = Sdb::read(&mut Cursor::new(file)).context("Failed to parse SDB file.")?;
+        Ok(Rc::new_cyclic(|weak| {
+            sdb.self_ref = weak.clone();
+            sdb
+        }))
     }
 }
 
@@ -119,6 +126,9 @@ pub mod api {
 #[derive(Clone, Debug)]
 #[br(little)]
 pub struct Sdb {
+    #[br(default)]
+    self_ref: Weak<Self>,
+
     #[br(magic = 1u32, temp)]
     hdr_len: u32,
     #[br(magic = 1u32)]
@@ -154,22 +164,18 @@ impl Sdb {
         let param = self
             .parameters
             .iter()
-            .find(|p| p.name == name)
+            .position(|p| p.name == name)
             .with_context(|| format!("Parameter name '{}' not found", name))?;
 
-        let descr = self.get_desc(param.type_descr_idx)?;
-        Ok(Parameter::new(self, param, descr))
-    }
-
-    fn param_by_id(&self, idx: u32) -> Result<Parameter> {
-        let param = self
-            .parameters
-            .iter()
-            .find(|p| p.id == idx)
-            .context("Parameter ID not found")?;
-
-        let descr = self.get_desc(param.type_descr_idx)?;
-        Ok(Parameter::new(self, param, descr))
+        let type_idx = self.parameters[param].type_descr_idx as usize;
+        if type_idx >= self.type_descr.len() {
+            bail!("Invalid type descriptor index for parameter {}.", name)
+        }
+        Ok(Parameter::new(
+            self.self_ref.upgrade().unwrap(),
+            param,
+            type_idx,
+        ))
     }
 
     fn get_desc(&self, idx: u32) -> Result<&TypeDescription> {
