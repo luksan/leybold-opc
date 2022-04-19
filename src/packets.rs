@@ -4,11 +4,12 @@ use anyhow::{anyhow, Result};
 use binrw::{binread, binrw, binwrite, BinRead, BinResult, BinWrite, ReadOptions, WriteOptions};
 use rhexdump::hexdump;
 
-use crate::opc_values::EncodeOpcValue;
-use crate::sdb::Parameter;
+use crate::opc_values::{EncodeOpcValue, Value};
+use crate::sdb;
 
 use std::fmt::{Debug, Formatter};
 use std::io::{Read, Seek, SeekFrom, Write};
+use std::rc::Rc;
 use std::time::Duration;
 
 #[binrw]
@@ -181,8 +182,11 @@ pub struct PayloadParamsRead {
 }
 
 impl PayloadParamsRead {
-    pub fn new(params: &[ParamRead]) -> Self {
-        let params = params.to_vec();
+    pub fn new(params: &[sdb::Parameter]) -> Self {
+        let params = params
+            .iter()
+            .map(|param| ParamRead::new(param.id(), param.type_info().response_len() as u32))
+            .collect();
         Self { params, end: () }
     }
 }
@@ -219,7 +223,7 @@ pub struct ParamWrite {
 }
 
 impl ParamWrite {
-    pub fn new<T: EncodeOpcValue>(param: Parameter, data: T) -> Result<Self> {
+    pub fn new<T: EncodeOpcValue>(param: sdb::Parameter, data: T) -> Result<Self> {
         Ok(Self {
             param_id: param.id(),
             data: data.opc_encode(&param.type_info())?,
@@ -246,22 +250,48 @@ impl ParamRead {
 
 #[binread]
 #[derive(Clone, Debug)]
-#[br(big, import_raw(read_args: ReadArgs<Vec<usize>>))]
+#[br(big, import_raw(read_args: ReadArgs<ParamQuerySet>))]
 /// The read argument is a Vec<usize> with the response length of each parameter.
 pub struct PayloadDynResponse {
     pub error_code: u16,
     #[br(map(|d:u32| Duration::from_millis(d as u64)))]
     pub timestamp: Duration,
-    #[br(parse_with = |reader,_,()| parse_dyn_payload(reader, &read_args.args))]
-    pub data: Vec<Vec<u8>>,
+    #[br(parse_with = |reader,_,()| parse_dyn_payload(reader, &read_args.args.0))]
+    pub data: Vec<Value>,
 }
-fn parse_dyn_payload<R: Read + Seek>(reader: &mut R, lengths: &[usize]) -> BinResult<Vec<Vec<u8>>> {
-    lengths
+fn parse_dyn_payload<R: Read + Seek>(
+    reader: &mut R,
+    params: &[sdb::Parameter],
+) -> BinResult<Vec<Value>> {
+    params
         .iter()
-        .map(|len| DynParam::read_args(reader, (*len,)).map(|p| p.0))
+        .map(|param| {
+            let one = u8::read(reader)?;
+            assert_eq!(one, 1, "Bad magic at start of parameter response payload.");
+            Value::read_args(reader, param.type_info())
+        })
         .collect()
 }
 
-#[derive(BinRead, Clone, Debug)]
-#[br(big, import(len: usize), magic = 1u8)]
-struct DynParam(#[br(count = len)] Vec<u8>);
+#[derive(Debug, Default, Clone)]
+pub struct ParamQuerySetBuilder(Vec<sdb::Parameter>);
+
+#[derive(Debug, Clone)]
+pub struct ParamQuerySet(pub Rc<[sdb::Parameter]>);
+
+impl ParamQuerySetBuilder {
+    pub fn add_param(&mut self, param: sdb::Parameter) {
+        self.0.push(param);
+    }
+    pub fn complete(self) -> ParamQuerySet {
+        ParamQuerySet(self.0.into())
+    }
+}
+
+impl ParamQuerySet {
+    pub fn create_query_packet(&self) -> PacketCC<PayloadParamsRead> {
+        let mut p = PacketCC::new(PayloadParamsRead::new(&self.0));
+        p.hdr.one_if_data_poll_maybe = 1;
+        p
+    }
+}

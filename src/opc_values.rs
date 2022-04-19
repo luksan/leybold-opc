@@ -1,9 +1,10 @@
 use crate::sdb::{TypeInfo, TypeKind};
 
 use anyhow::{anyhow, bail, Context, Result};
-use binrw::BinReaderExt;
+use binrw::{BinRead, BinReaderExt, BinResult, ReadOptions};
+
 use std::fmt::{Debug, Formatter};
-use std::io::{Cursor, Read};
+use std::io::{Cursor, Read, Seek};
 
 /// Used when parsing the response from the instrument,
 /// for converting OPC types to native Rust types.
@@ -116,6 +117,23 @@ impl Value {
             }
         };
         Ok(value)
+    }
+}
+
+impl BinRead for Value {
+    type Args = TypeInfo;
+
+    fn read_options<R: Read + Seek>(
+        reader: &mut R,
+        _options: &ReadOptions,
+        args: Self::Args,
+    ) -> BinResult<Self> {
+        let mut buf = vec![0; args.response_len()];
+        reader.read_exact(buf.as_mut_slice())?;
+        Self::parse(&mut buf, &args).map_err(|e| binrw::Error::Custom {
+            pos: 0,
+            err: Box::new(e),
+        })
     }
 }
 

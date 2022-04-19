@@ -5,13 +5,12 @@ use binrw::{io::Cursor, BinRead, BinReaderExt, BinWrite};
 use clap::{CommandFactory, ErrorKind as ClapError, Parser, Subcommand};
 use rhexdump::hexdump;
 
-use leybold_opc_rs::opc_values::Value;
 use leybold_opc_rs::packets::{
-    PacketCC, PacketCCHeader, ParamRead, ParamWrite, PayloadDynResponse, PayloadParamWrite,
-    PayloadParamsRead, PayloadSdbDownload, PayloadSdbVersionQuery, PayloadSdbVersionResponse,
+    PacketCC, PacketCCHeader, ParamQuerySetBuilder, ParamWrite, PayloadDynResponse,
+    PayloadParamWrite, PayloadSdbDownload, PayloadSdbVersionQuery, PayloadSdbVersionResponse,
     PayloadUnknown,
 };
-use leybold_opc_rs::sdb::{self, Parameter};
+use leybold_opc_rs::sdb;
 
 use std::io::{Read, Write};
 use std::net::{IpAddr, TcpStream};
@@ -148,9 +147,11 @@ fn check_sdb(conn: &mut Connection) -> Result<()> {
 }
 
 fn poll_pressure(conn: &mut Connection) -> Result<()> {
-    let mut param_set = ParamQuerySet::default();
+    let mut param_set = ParamQuerySetBuilder::default();
     let sdb = sdb::read_sdb_file()?;
     param_set.add_param(sdb.param_by_name(".Gauge[1].Parameter[1].Value")?);
+
+    let param_set = param_set.complete();
 
     let mut last_timestamp = 0.0;
     let mut last_time = std::time::Instant::now();
@@ -159,8 +160,7 @@ fn poll_pressure(conn: &mut Connection) -> Result<()> {
     let pkt = param_set.create_query_packet();
     loop {
         conn.send(&pkt)?;
-        let r =
-            conn.receive_response_args::<PayloadDynResponse, _>(param_set.response_param_len())?;
+        let r = conn.receive_response_args::<PayloadDynResponse, _>(param_set.clone())?;
         let now = std::time::Instant::now();
         println!(
             "time delta {:.2} == {:.2} ms",
@@ -169,66 +169,29 @@ fn poll_pressure(conn: &mut Connection) -> Result<()> {
         );
         last_time = now;
         last_timestamp = r.payload.timestamp.as_secs_f64();
-        let response = param_set.parse_response(&r.payload.data)?;
+        let response = &r.payload.data;
         println!("Pressure {response:x?} mbar.");
         conn.send_66_ack()?;
-    }
-}
-#[derive(Debug, Default, Clone)]
-struct ParamQuerySet(Vec<Parameter>);
-
-impl ParamQuerySet {
-    pub fn add_param(&mut self, param: Parameter) {
-        self.0.push(param);
-    }
-
-    pub fn create_query_packet(&self) -> PacketCC<PayloadParamsRead> {
-        let params: Vec<_> = self
-            .0
-            .iter()
-            .map(|p| ParamRead::new(p.id(), p.type_info().response_len() as u32))
-            .collect();
-        let mut p = PacketCC::new(PayloadParamsRead::new(params.as_slice()));
-        p.hdr.one_if_data_poll_maybe = 1;
-        p
-    }
-
-    pub fn response_param_len(&self) -> Vec<usize> {
-        self.0
-            .iter()
-            .map(|p| p.type_info().response_len())
-            .collect()
-    }
-
-    pub fn parse_response(&self, bytes: &Vec<Vec<u8>>) -> Result<Vec<Value>> {
-        let ret = self
-            .0
-            .iter()
-            .zip(bytes.iter())
-            .map(|(param, bytes)| {
-                Value::parse(bytes, &param.type_info())
-                    .with_context(|| format!("Parsing {:?}\n{}", param, hexdump(bytes)))
-            })
-            .collect::<Result<Vec<_>>>()?;
-        Ok(ret)
     }
 }
 
 fn read_dyn_params(conn: &mut Connection) -> Result<()> {
     let sdb = sdb::read_sdb_file()?;
-    let mut param_set = ParamQuerySet::default();
+    let mut param_set = ParamQuerySetBuilder::default();
     param_set.add_param(sdb.param_by_name(".CockpitUser")?);
     // param_set.add_param(sdb.param_by_name(".Gauge[1].Parameter[1].Value")?);
     // param_set.add_param(sdb.param_by_name(".Gauge[1].Parameter[1].StringValue")?);
 
+    let param_set = param_set.complete();
+
     conn.stream.set_read_timeout(Some(Duration::from_secs(2)))?;
 
     conn.send(&param_set.create_query_packet())?;
-    let r = conn.receive_response_args::<PayloadDynResponse, _>(param_set.response_param_len());
+    let r = conn.receive_response_args::<PayloadDynResponse, _>(param_set.clone());
     conn.send_66_ack()?;
 
     let r = r?;
-    let resp = param_set.parse_response(&r.payload.data)?;
+    let resp = &r.payload.data;
     for (r, p) in resp.iter().zip(param_set.0.iter()) {
         println!("{} {:?}", p.name(), r);
     }
