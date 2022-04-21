@@ -50,6 +50,10 @@ where
     pub tail: Vec<u8>,
 }
 
+pub trait QueryPacket: BinWrite<Args = ()> {
+    type Response: BinRead;
+}
+
 #[derive(Clone)]
 pub struct ReadArgs<T: Clone> {
     hdr: PacketCCHeader,
@@ -167,9 +171,9 @@ impl Debug for PayloadSdbDownload {
     }
 }
 
+/// Encodes a parameter read command.
 #[binwrite]
 #[derive(Clone, Debug)]
-#[br(big, import(_args: ReadArgs<()>))]
 #[bw(big, magic = 0x2e00u16)]
 pub struct PayloadParamsRead {
     #[bw(calc = params.len() as u32)]
@@ -179,6 +183,10 @@ pub struct PayloadParamsRead {
     params: Vec<ParamRead>,
     #[bw(magic = 0x00_02_53_34_u32)]
     end: (),
+}
+
+impl QueryPacket for PayloadParamsRead {
+    type Response = PayloadDynResponse;
 }
 
 impl PayloadParamsRead {
@@ -201,6 +209,10 @@ pub struct PayloadParamWrite {
     params: Vec<ParamWrite>,
     #[bw(magic = 0x00_02_53_34_u32)]
     end: (),
+}
+
+impl QueryPacket for PayloadParamWrite {
+    type Response = PayloadUnknown;
 }
 
 impl PayloadParamWrite {
@@ -251,7 +263,6 @@ impl ParamRead {
 #[binread]
 #[derive(Clone, Debug)]
 #[br(big, import_raw(read_args: ReadArgs<ParamQuerySet>))]
-/// The read argument is a Vec<usize> with the response length of each parameter.
 pub struct PayloadDynResponse {
     pub error_code: u16,
     #[br(map(|d:u32| Duration::from_millis(d as u64)))]
