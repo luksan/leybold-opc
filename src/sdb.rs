@@ -7,13 +7,15 @@ use rhexdump::hexdump;
 
 use std::fmt::{Debug, Formatter};
 use std::io::{Read, Seek};
-use std::rc::Weak;
+use std::rc::{Rc, Weak};
 
 pub use api::*;
 
 pub mod api {
     use super::*;
     pub use super::{Sdb, TypeKind};
+    use crate::opc_values::Value;
+    use std::hash::{Hash, Hasher};
     use std::io::Cursor;
     use std::rc::Rc;
 
@@ -48,7 +50,28 @@ pub mod api {
         pub fn value_kind(&self) -> TypeKind {
             self.sdb.type_descr[self.descr].kind
         }
+
+        pub fn value_from_str(&self, val: &str) -> Result<Value> {
+            Value::from_str(val, &self.type_info())
+        }
     }
+
+    impl Hash for Parameter {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            Rc::as_ptr(&self.sdb).hash(state);
+            self.param.hash(state);
+            self.descr.hash(state);
+        }
+    }
+
+    impl PartialEq<Self> for Parameter {
+        fn eq(&self, other: &Self) -> bool {
+            self.param == other.param
+                && self.descr == other.descr
+                && Rc::ptr_eq(&self.sdb, &other.sdb)
+        }
+    }
+    impl Eq for Parameter {}
 
     impl Debug for Parameter {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -164,7 +187,13 @@ pub struct Sdb {
     tail: Vec<u8>,
 }
 
+pub type SdbRef = Rc<Sdb>;
+
 impl Sdb {
+    pub fn get_ref(&self) -> SdbRef {
+        self.self_ref.upgrade().unwrap()
+    }
+
     pub fn param_by_name(&self, name: &str) -> Result<Parameter> {
         let param = self
             .parameters

@@ -7,6 +7,7 @@ use rhexdump::hexdump;
 use crate::opc_values::{EncodeOpcValue, Value};
 use crate::sdb;
 
+use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::rc::Rc;
@@ -269,6 +270,8 @@ pub struct PayloadDynResponse {
     pub timestamp: Duration,
     #[br(parse_with = |reader,_,()| parse_dyn_payload(reader, &read_args.args.0))]
     pub data: Vec<Value>,
+    #[br(calc = read_args.args)]
+    pub query_set: ParamQuerySet,
 }
 fn parse_dyn_payload<R: Read + Seek>(
     reader: &mut R,
@@ -284,13 +287,35 @@ fn parse_dyn_payload<R: Read + Seek>(
         .collect()
 }
 
-#[derive(Debug, Default, Clone)]
-pub struct ParamQuerySetBuilder(Vec<sdb::Parameter>);
+impl PayloadDynResponse {
+    pub fn into_hashmap(self) -> HashMap<sdb::Parameter, Value> {
+        self.query_set
+            .0
+            .iter()
+            .cloned()
+            .zip(self.data.into_iter())
+            .collect()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&sdb::Parameter, &Value)> {
+        self.query_set.0.iter().zip(self.data.iter())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ParamQuerySetBuilder(Vec<sdb::Parameter>, sdb::SdbRef);
 
 #[derive(Debug, Clone)]
 pub struct ParamQuerySet(pub Rc<[sdb::Parameter]>);
 
 impl ParamQuerySetBuilder {
+    pub fn new(sdb: &sdb::Sdb) -> Self {
+        Self(vec![], sdb.get_ref())
+    }
+    pub fn add(&mut self, name: &str) -> Result<()> {
+        self.0.push(self.1.param_by_name(name)?);
+        Ok(())
+    }
     pub fn add_param(&mut self, param: sdb::Parameter) {
         self.0.push(param);
     }

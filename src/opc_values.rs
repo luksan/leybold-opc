@@ -117,6 +117,19 @@ impl Value {
         };
         Ok(value)
     }
+
+    pub fn from_str(val: &str, desc: &TypeInfo) -> Result<Self> {
+        Ok(match desc.kind() {
+            TypeKind::Bool => Value::Bool(val.parse()?),
+            TypeKind::Real => Value::Float(val.parse()?),
+            TypeKind::Time => unimplemented!(),
+            TypeKind::String => Value::String(val.to_string()),
+            TypeKind::Array => unimplemented!(),
+            TypeKind::Data => unimplemented!(),
+            TypeKind::Pointer => unimplemented!(),
+            _ => Value::Int(val.parse()?),
+        })
+    }
 }
 
 impl BinRead for Value {
@@ -135,6 +148,19 @@ impl BinRead for Value {
 
 pub trait EncodeOpcValue {
     fn opc_encode(self, desc: &TypeInfo) -> Result<Vec<u8>>;
+}
+
+impl EncodeOpcValue for &Value {
+    fn opc_encode(self, desc: &TypeInfo) -> Result<Vec<u8>> {
+        match self {
+            Value::Bool(b) if desc.kind() == TypeKind::Bool => return Ok(vec![*b as u8]),
+            Value::Int(i) => return i.opc_encode(desc),
+            Value::Float(_) => todo!("Implement OPC value encoding for f32."),
+            Value::String(s) => return s.as_bytes().opc_encode(desc),
+            _ => {}
+        }
+        bail!("Can't encode value {:?} as {:?}", self, desc.kind())
+    }
 }
 
 macro_rules! impl_enc_int {
