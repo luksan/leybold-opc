@@ -2,7 +2,10 @@
 
 use anyhow::{bail, Context, Result};
 use binrw::{io::Cursor, BinRead, BinReaderExt, BinWrite};
-use clap::{CommandFactory, ErrorKind as ClapError, Parser, Subcommand};
+use clap::{
+    Arg, ArgMatches, Args, Command, CommandFactory, Error, ErrorKind as ClapError, FromArgMatches,
+    Parser, Subcommand,
+};
 use rhexdump::hexdump;
 
 use leybold_opc_rs::packets::{
@@ -216,21 +219,98 @@ fn write_param(conn: &mut Connection) -> Result<()> {
     Ok(())
 }
 
-#[derive(Parser)]
+#[derive(Parser, Debug)]
 #[clap(author = "Lukas Sandström", version, about)]
 struct CmdlineArgs {
     /// The IP address of the Vacvision unit.
+    #[clap(global = true, long = "ip")]
     ip: Option<IpAddr>,
+    #[clap(flatten)]
+    readwrite: RwCmds,
     #[clap(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Debug)]
 enum Commands {
     PollPressure,
     SdbDownload,
     SdbPrint,
     Test,
+}
+
+#[derive(Debug)]
+enum Rw {
+    Read(String),
+    Write(String),
+}
+#[derive(Debug)]
+struct RwCmds(Vec<Rw>);
+
+impl Deref for RwCmds {
+    type Target = [Rw];
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl Args for RwCmds {
+    fn augment_args(cmd: Command<'_>) -> Command<'_> {
+        let read = Arg::new("read")
+            .short('r')
+            .help("Read the parameter from the instrument")
+            .takes_value(true)
+            .multiple_occurrences(true)
+            .requires("ip")
+            .display_order(10);
+        let write = read
+            .clone()
+            .id("write")
+            .short('w')
+            .help("Write the given value to the parameter on the instrument.");
+        cmd.arg(read).arg(write)
+    }
+
+    fn augment_args_for_update(_cmd: Command<'_>) -> Command<'_> {
+        todo!()
+    }
+}
+impl FromArgMatches for RwCmds {
+    fn from_arg_matches(matches: &ArgMatches) -> std::result::Result<Self, Error> {
+        let mut s = Self(vec![]);
+        s.update_from_arg_matches(matches)?;
+        Ok(s)
+    }
+
+    fn update_from_arg_matches(&mut self, matches: &ArgMatches) -> std::result::Result<(), Error> {
+        let mut args: Vec<_> = matches
+            .indices_of("read")
+            .map(|read| {
+                read.zip(
+                    matches
+                        .values_of("read")
+                        .unwrap()
+                        .map(|param| Rw::Read(param.to_string())),
+                )
+                .collect()
+            })
+            .unwrap_or_default();
+        if let Some(write) = matches.indices_of("write") {
+            args.extend(
+                write.zip(
+                    matches
+                        .values_of("write")
+                        .unwrap()
+                        .map(|param| Rw::Write(param.to_string())),
+                ),
+            );
+        }
+
+        args.sort_unstable_by_key(|a| a.0);
+        self.0.extend(args.into_iter().map(|a| a.1));
+        Ok(())
+    }
 }
 
 fn main() -> Result<()> {
@@ -248,15 +328,20 @@ fn main() -> Result<()> {
             conn.as_mut().unwrap()
         }};
     }
-
-    match &args.command {
-        Commands::PollPressure => poll_pressure(connect!()),
-        Commands::SdbDownload => download_sbd(connect!()),
-        Commands::SdbPrint => sdb::print_sdb_file(),
-        Commands::Test => {
-            let conn = connect!();
-            write_param(conn)?;
-            read_dyn_params(conn)
-        }
+    if let Some(command) = &args.command {
+        return match command {
+            Commands::PollPressure => poll_pressure(connect!()),
+            Commands::SdbDownload => download_sbd(connect!()),
+            Commands::SdbPrint => sdb::print_sdb_file(),
+            Commands::Test => {
+                let conn = connect!();
+                write_param(conn)?;
+                read_dyn_params(conn)
+            }
+        };
     }
+    if args.readwrite.is_empty() {
+        return Ok(());
+    }
+    Ok(())
 }
