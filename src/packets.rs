@@ -236,7 +236,7 @@ pub struct ParamWrite {
 }
 
 impl ParamWrite {
-    pub fn new<T: EncodeOpcValue>(param: sdb::Parameter, data: T) -> Result<Self> {
+    pub fn new<T: EncodeOpcValue>(param: &sdb::Parameter, data: T) -> Result<Self> {
         Ok(Self {
             param_id: param.id(),
             data: data.opc_encode(&param.type_info())?,

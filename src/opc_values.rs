@@ -119,7 +119,7 @@ impl Value {
     }
 
     pub fn from_str(val: &str, desc: &TypeInfo) -> Result<Self> {
-        Ok(match desc.kind() {
+        let val = match desc.kind() {
             TypeKind::Bool => Value::Bool(val.parse()?),
             TypeKind::Real => Value::Float(val.parse()?),
             TypeKind::Time => unimplemented!(),
@@ -128,7 +128,10 @@ impl Value {
             TypeKind::Data => unimplemented!(),
             TypeKind::Pointer => unimplemented!(),
             _ => Value::Int(val.parse()?),
-        })
+        };
+        // Check that the value can be encoded into the type
+        val.opc_encode(desc)?;
+        Ok(val)
     }
 }
 

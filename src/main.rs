@@ -1,12 +1,13 @@
 #![allow(dead_code, unused_mut)]
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{
     Arg, ArgMatches, Args, Command, CommandFactory, Error, ErrorKind as ClapError, FromArgMatches,
     Parser, Subcommand,
 };
 use rhexdump::hexdump;
 
+use leybold_opc_rs::opc_values::Value;
 use leybold_opc_rs::packets::{PacketCC, ParamQuerySetBuilder, ParamWrite, PayloadParamWrite};
 use leybold_opc_rs::plc_connection::{self, Connection};
 use leybold_opc_rs::sdb;
@@ -68,7 +69,7 @@ fn write_param(conn: &mut Connection) -> Result<()> {
     let param = sdb.param_by_name(".CockpitUser")?;
 
     let packet = PacketCC::new(PayloadParamWrite::new(&[ParamWrite::new(
-        param,
+        &param,
         b"User1234",
     )?]));
     let r = conn.query(&packet)?;
@@ -83,7 +84,7 @@ struct CmdlineArgs {
     #[clap(global = true, long = "ip")]
     ip: Option<IpAddr>,
     #[clap(flatten)]
-    readwrite: RwCmds,
+    readwrite: RwCmds<String, String>,
     #[clap(subcommand)]
     command: Option<Commands>,
 }
@@ -97,22 +98,45 @@ enum Commands {
 }
 
 #[derive(Debug)]
-enum Rw {
-    Read(String),
-    Write((String, String)),
+enum Rw<Param, Value> {
+    Read(Param),
+    Write(Param, Value),
 }
 #[derive(Debug)]
-struct RwCmds(Vec<Rw>);
+struct RwCmds<Param, Value>(Vec<Rw<Param, Value>>);
 
-impl Deref for RwCmds {
-    type Target = [Rw];
-
+impl<Param, Value> Deref for RwCmds<Param, Value> {
+    type Target = [Rw<Param, Value>];
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-impl Args for RwCmds {
+impl RwCmds<String, String> {
+    pub fn try_to_param_value(&self, sdb: &sdb::Sdb) -> Result<RwCmds<sdb::Parameter, Value>> {
+        let inner: Result<Vec<_>> = self
+            .0
+            .iter()
+            .map(|rw| match rw {
+                Rw::Read(param) => Ok(Rw::Read(sdb.param_by_name(&param)?)),
+                Rw::Write(param, value) => {
+                    let param = sdb.param_by_name(&param)?;
+                    let value = param.value_from_str(&value).with_context(|| {
+                        format!(
+                            "Failed to parse '{}' as valid value for {}.",
+                            value,
+                            param.name()
+                        )
+                    })?;
+                    Ok(Rw::Write(param, value))
+                }
+            })
+            .collect();
+        Ok(RwCmds(inner?))
+    }
+}
+
+impl Args for RwCmds<String, String> {
     fn augment_args(cmd: Command<'_>) -> Command<'_> {
         let read = Arg::new("read")
             .short('r')
@@ -133,7 +157,7 @@ impl Args for RwCmds {
         todo!()
     }
 }
-impl FromArgMatches for RwCmds {
+impl FromArgMatches for RwCmds<String, String> {
     fn from_arg_matches(matches: &ArgMatches) -> std::result::Result<Self, Error> {
         let mut s = Self(vec![]);
         s.update_from_arg_matches(matches)?;
@@ -159,7 +183,7 @@ impl FromArgMatches for RwCmds {
                     clap::ErrorKind::InvalidValue,
                     "Invalid write argument, should be 'param=value'.",
                 ))?;
-                args.push((idx, Rw::Write((param.to_string(), val.to_string()))));
+                args.push((idx, Rw::Write(param.to_string(), val.to_string())));
             }
         }
 
@@ -178,16 +202,16 @@ fn main() -> Result<()> {
                 .error(ClapError::ArgumentNotFound, "Missing IP address.")
                 .exit()
         });
-        Connection::connect(ip).expect("Connection failed")
+        Connection::connect(ip)
     };
 
     if let Some(command) = &args.command {
         return match command {
-            Commands::PollPressure => poll_pressure(&mut connect()),
-            Commands::SdbDownload => plc_connection::download_sbd(&mut connect()),
+            Commands::PollPressure => poll_pressure(&mut connect()?),
+            Commands::SdbDownload => plc_connection::download_sbd(&mut connect()?),
             Commands::SdbPrint => sdb::print_sdb_file(),
             Commands::Test => {
-                let conn = &mut connect();
+                let conn = &mut connect()?;
                 write_param(conn)?;
                 read_dyn_params(conn)
             }
@@ -196,21 +220,21 @@ fn main() -> Result<()> {
     if args.readwrite.is_empty() {
         return Ok(());
     }
-    let mut conn = &mut connect();
     let sdb = sdb::read_sdb_file()?;
-    for p in args.readwrite.iter() {
+    let readwrite = args.readwrite.try_to_param_value(&sdb)?;
+
+    let mut conn = &mut connect()?;
+    for p in readwrite.iter() {
         match p {
             Rw::Read(param) => {
                 let mut q = ParamQuerySetBuilder::new(&sdb);
-                q.add(&param)?;
+                q.add_param(param.clone());
                 let q = q.complete();
                 let r = conn.query_response_args(&q.create_query_packet(), q.clone())?;
                 dbg!(r.payload.into_hashmap());
             }
-            Rw::Write((param, value)) => {
-                let param = sdb.param_by_name(param)?;
-                let value = param.value_from_str(value)?;
-                let x = ParamWrite::new(param, &value)?;
+            Rw::Write(param, value) => {
+                let x = ParamWrite::new(param, value)?;
                 let r = conn.query(&PacketCC::new(PayloadParamWrite::new(&[x])))?;
                 dbg!(r);
             }
