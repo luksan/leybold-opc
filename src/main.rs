@@ -15,6 +15,8 @@ use leybold_opc_rs::sdb;
 use std::net::IpAddr;
 use std::ops::Deref;
 use std::rc::Rc;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering::SeqCst;
 
 fn hex<H: Deref<Target = [u8]>>(hex: &H) {
     println!("{}", hexdump(hex.as_ref()));
@@ -197,6 +199,8 @@ impl FromArgMatches for RwCmds<String, String> {
     }
 }
 
+static CTRL_C_PRESSED: AtomicBool = AtomicBool::new(false);
+
 fn main() -> Result<()> {
     let args: CmdlineArgs = Parser::parse();
 
@@ -227,15 +231,28 @@ fn main() -> Result<()> {
     let sdb = sdb::read_sdb_file()?;
     let readwrite = args.readwrite.try_to_param_value(&sdb)?;
 
+    // install signal handler for ctrl-c
+    ctrlc::set_handler(|| {
+        let again = CTRL_C_PRESSED.fetch_or(true, SeqCst);
+        if again {
+            std::process::exit(1);
+        }
+    })
+    .context("Failed to set signal handler.")?;
+
     let mut conn = connect()?;
 
     loop {
         // Poll loop
         execute_queries(&sdb, &readwrite, &mut conn)?;
 
+        if CTRL_C_PRESSED.load(SeqCst) {
+            break;
+        }
+
         if let Some(delay) = args.poll {
             let d = std::time::Duration::from_secs_f32(delay);
-            std::thread::sleep(d);
+            std::thread::park_timeout(d);
         } else {
             break;
         }
@@ -251,6 +268,9 @@ fn execute_queries(
     let mut parm_iter = readwrite.iter();
     let mut query_builder = ParamQuerySetBuilder::new(&sdb);
     loop {
+        if CTRL_C_PRESSED.load(SeqCst) {
+            break;
+        }
         let param = parm_iter.next();
         // build read set
         if let Some(Rw::Read(param)) = param {
@@ -263,7 +283,13 @@ fn execute_queries(
             query_builder = ParamQuerySetBuilder::new(&sdb);
             let r =
                 conn.query_response_args(&query_set.create_query_packet(), query_set.clone())?;
-            dbg!(r.payload.into_hashmap());
+            for (param, value) in r.payload.iter() {
+                println!("{}: {value:?}", param.name());
+            }
+        }
+
+        if CTRL_C_PRESSED.load(SeqCst) {
+            break;
         }
 
         // perform write
