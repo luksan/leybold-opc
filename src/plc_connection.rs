@@ -108,7 +108,7 @@ impl Connection {
     }
 }
 
-fn query_fw_ver() -> PacketCC<PayloadUnknown> {
+fn _query_fw_ver() -> PacketCC<PayloadUnknown> {
     let payload = PayloadUnknown::from([0x11]);
     PacketCC::new(payload)
 }
@@ -147,7 +147,7 @@ pub fn download_sbd(conn: &mut Connection) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn check_sdb(conn: &mut Connection) -> anyhow::Result<()> {
+fn _check_sdb(conn: &mut Connection) -> anyhow::Result<()> {
     conn.send(&PacketCC::new(PayloadSdbVersionQuery::new()))?;
     let r = conn.receive_response::<PayloadSdbVersionResponse>()?;
     conn.send_66_ack()?;

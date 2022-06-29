@@ -319,8 +319,11 @@ impl ParamQuerySetBuilder {
     pub fn add_param(&mut self, param: sdb::Parameter) {
         self.0.push(param);
     }
-    pub fn complete(self) -> ParamQuerySet {
+    pub fn build_query_set(self) -> ParamQuerySet {
         ParamQuerySet(self.0.into())
+    }
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 }
 

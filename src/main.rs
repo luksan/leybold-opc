@@ -14,6 +14,7 @@ use leybold_opc_rs::sdb;
 
 use std::net::IpAddr;
 use std::ops::Deref;
+use std::rc::Rc;
 
 fn hex<H: Deref<Target = [u8]>>(hex: &H) {
     println!("{}", hexdump(hex.as_ref()));
@@ -24,7 +25,7 @@ fn poll_pressure(conn: &mut Connection) -> Result<()> {
     let mut param_set = ParamQuerySetBuilder::new(&sdb);
     param_set.add(".Gauge[1].Parameter[1].Value")?;
 
-    let param_set = param_set.complete();
+    let param_set = param_set.build_query_set();
 
     let mut last_timestamp = 0.0;
     let mut last_time = std::time::Instant::now();
@@ -52,7 +53,7 @@ fn read_dyn_params(conn: &mut Connection) -> Result<()> {
     // param_set.add_param(sdb.param_by_name(".Gauge[1].Parameter[1].Value")?);
     // param_set.add_param(sdb.param_by_name(".Gauge[1].Parameter[1].StringValue")?);
 
-    let param_set = param_set.complete();
+    let param_set = param_set.build_query_set();
 
     let r = conn.query_response_args(&param_set.create_query_packet(), param_set.clone())?;
 
@@ -85,6 +86,9 @@ struct CmdlineArgs {
     ip: Option<IpAddr>,
     #[clap(flatten)]
     readwrite: RwCmds<String, String>,
+    /// Read out the values continuously
+    #[clap(long, value_name = "SECONDS")]
+    poll: Option<f32>,
     #[clap(subcommand)]
     command: Option<Commands>,
 }
@@ -223,21 +227,54 @@ fn main() -> Result<()> {
     let sdb = sdb::read_sdb_file()?;
     let readwrite = args.readwrite.try_to_param_value(&sdb)?;
 
-    let mut conn = &mut connect()?;
-    for p in readwrite.iter() {
-        match p {
-            Rw::Read(param) => {
-                let mut q = ParamQuerySetBuilder::new(&sdb);
-                q.add_param(param.clone());
-                let q = q.complete();
-                let r = conn.query_response_args(&q.create_query_packet(), q.clone())?;
-                dbg!(r.payload.into_hashmap());
-            }
-            Rw::Write(param, value) => {
-                let x = ParamWrite::new(param, value)?;
-                let r = conn.query(&PacketCC::new(PayloadParamWrite::new(&[x])))?;
-                dbg!(r);
-            }
+    let mut conn = connect()?;
+
+    loop {
+        // Poll loop
+        execute_queries(&sdb, &readwrite, &mut conn)?;
+
+        if let Some(delay) = args.poll {
+            let d = std::time::Duration::from_secs_f32(delay);
+            std::thread::sleep(d);
+        } else {
+            break;
+        }
+    }
+    Ok(())
+}
+
+fn execute_queries(
+    sdb: &Rc<sdb::Sdb>,
+    readwrite: &RwCmds<sdb::Parameter, Value>,
+    conn: &mut Connection,
+) -> Result<()> {
+    let mut parm_iter = readwrite.iter();
+    let mut query_builder = ParamQuerySetBuilder::new(&sdb);
+    loop {
+        let param = parm_iter.next();
+        // build read set
+        if let Some(Rw::Read(param)) = param {
+            query_builder.add_param(param.clone());
+            continue;
+        }
+        // perform read query
+        if !query_builder.is_empty() {
+            let query_set = query_builder.build_query_set();
+            query_builder = ParamQuerySetBuilder::new(&sdb);
+            let r =
+                conn.query_response_args(&query_set.create_query_packet(), query_set.clone())?;
+            dbg!(r.payload.into_hashmap());
+        }
+
+        // perform write
+        if let Some(Rw::Write(param, value)) = param {
+            let x = ParamWrite::new(param, value)?;
+            let r = conn.query(&PacketCC::new(PayloadParamWrite::new(&[x])))?;
+            dbg!(r);
+        }
+        // repeat until iterator empty
+        if param.is_none() {
+            break;
         }
     }
     Ok(())
