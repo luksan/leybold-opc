@@ -2,8 +2,8 @@
 
 use anyhow::{Context, Result};
 use clap::{
-    Arg, ArgMatches, Args, Command, CommandFactory, Error, ErrorKind as ClapError, FromArgMatches,
-    Parser, Subcommand,
+    error::ErrorKind as ClapError, Arg, ArgAction, ArgMatches, Args, Command, CommandFactory,
+    FromArgMatches, Parser, Subcommand,
 };
 use rhexdump::hexdump;
 
@@ -95,6 +95,12 @@ struct CmdlineArgs {
     command: Option<Commands>,
 }
 
+#[test]
+fn verify_cli() {
+    use clap::CommandFactory;
+    CmdlineArgs::command().debug_assert();
+}
+
 #[derive(Subcommand, Debug)]
 enum Commands {
     PollPressure,
@@ -124,10 +130,10 @@ impl RwCmds<String, String> {
             .0
             .iter()
             .map(|rw| match rw {
-                Rw::Read(param) => Ok(Rw::Read(sdb.param_by_name(&param)?)),
+                Rw::Read(param) => Ok(Rw::Read(sdb.param_by_name(param)?)),
                 Rw::Write(param, value) => {
-                    let param = sdb.param_by_name(&param)?;
-                    let value = param.value_from_str(&value).with_context(|| {
+                    let param = sdb.param_by_name(param)?;
+                    let value = param.value_from_str(value).with_context(|| {
                         format!(
                             "Failed to parse '{}' as valid value for {}.",
                             value,
@@ -143,40 +149,43 @@ impl RwCmds<String, String> {
 }
 
 impl Args for RwCmds<String, String> {
-    fn augment_args(cmd: Command<'_>) -> Command<'_> {
+    fn augment_args(cmd: Command) -> Command {
         let read = Arg::new("read")
             .short('r')
             .help("Read the parameter from the instrument")
-            .takes_value(true)
-            .multiple_occurrences(true)
+            .action(ArgAction::Append)
             .requires("ip")
             .display_order(10);
         let write = read
             .clone()
             .id("write")
             .short('w')
+            .action(ArgAction::Append)
             .help("Write the given value to the parameter on the instrument.");
         cmd.arg(read).arg(write)
     }
 
-    fn augment_args_for_update(_cmd: Command<'_>) -> Command<'_> {
+    fn augment_args_for_update(_cmd: Command) -> Command {
         todo!()
     }
 }
 impl FromArgMatches for RwCmds<String, String> {
-    fn from_arg_matches(matches: &ArgMatches) -> std::result::Result<Self, Error> {
+    fn from_arg_matches(matches: &ArgMatches) -> std::result::Result<Self, clap::Error> {
         let mut s = Self(vec![]);
         s.update_from_arg_matches(matches)?;
         Ok(s)
     }
 
-    fn update_from_arg_matches(&mut self, matches: &ArgMatches) -> std::result::Result<(), Error> {
-        let mut args: Vec<_> = matches
+    fn update_from_arg_matches(
+        &mut self,
+        matches: &ArgMatches,
+    ) -> std::result::Result<(), clap::Error> {
+        let mut args: Vec<(usize, Rw<String, String>)> = matches
             .indices_of("read")
             .map(|read| {
                 read.zip(
                     matches
-                        .values_of("read")
+                        .get_many::<String>("read")
                         .unwrap()
                         .map(|param| Rw::Read(param.to_string())),
                 )
@@ -184,11 +193,13 @@ impl FromArgMatches for RwCmds<String, String> {
             })
             .unwrap_or_default();
         if let Some(write) = matches.indices_of("write") {
-            for (idx, arg) in write.zip(matches.values_of("write").unwrap()) {
-                let (param, val) = arg.split_once('=').ok_or(clap::Error::raw(
-                    clap::ErrorKind::InvalidValue,
-                    "Invalid write argument, should be 'param=value'.",
-                ))?;
+            for (idx, arg) in write.zip(matches.get_many::<String>("write").unwrap()) {
+                let (param, val) = arg.split_once('=').ok_or_else(|| {
+                    clap::Error::raw(
+                        ClapError::InvalidValue,
+                        "Invalid write argument, should be 'param=value'.",
+                    )
+                })?;
                 args.push((idx, Rw::Write(param.to_string(), val.to_string())));
             }
         }
@@ -207,7 +218,7 @@ fn main() -> Result<()> {
     let connect = || {
         let ip = args.ip.unwrap_or_else(|| {
             CmdlineArgs::command()
-                .error(ClapError::ArgumentNotFound, "Missing IP address.")
+                .error(ClapError::MissingRequiredArgument, "Missing IP address.")
                 .exit()
         });
         Connection::connect(ip)
@@ -266,7 +277,7 @@ fn execute_queries(
     conn: &mut Connection,
 ) -> Result<()> {
     let mut parm_iter = readwrite.iter();
-    let mut query_builder = ParamQuerySetBuilder::new(&sdb);
+    let mut query_builder = ParamQuerySetBuilder::new(sdb);
     loop {
         if CTRL_C_PRESSED.load(SeqCst) {
             break;
@@ -280,7 +291,7 @@ fn execute_queries(
         // perform read query
         if !query_builder.is_empty() {
             let query_set = query_builder.build_query_set();
-            query_builder = ParamQuerySetBuilder::new(&sdb);
+            query_builder = ParamQuerySetBuilder::new(sdb);
             let r =
                 conn.query_response_args(&query_set.create_query_packet(), query_set.clone())?;
             for (param, value) in r.payload.iter() {
