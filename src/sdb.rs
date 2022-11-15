@@ -245,7 +245,7 @@ impl TypeDescription {
 }
 
 /// The various parameter data types
-#[derive(Copy, Clone, Debug, BinRead, PartialEq)]
+#[derive(Copy, Clone, Debug, BinRead, PartialEq, Eq)]
 #[br(repr(u32), little)]
 pub enum TypeKind {
     Bool = 0,
@@ -324,7 +324,7 @@ struct SdbParam {
     name: SdbStr,
 }
 
-#[derive(BinRead, Debug, Copy, Clone, PartialEq)]
+#[derive(BinRead, Debug, Copy, Clone, PartialEq, Eq)]
 #[br(little, repr(u16))]
 pub enum AccessMode {
     Read = 0x72,

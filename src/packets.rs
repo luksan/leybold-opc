@@ -14,7 +14,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 #[binrw]
-#[derive(Copy, Clone, Debug, PartialEq, Default)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
 #[br(big, magic = 0xCCCC0001u32)]
 #[bw(big, magic = 0xCCCC0001u32, import (payload_len_wr: u16))]
 pub struct PacketCCHeader {
@@ -41,7 +41,7 @@ impl PacketCCHeader {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PacketCC<Payload = PayloadUnknown>
 where
     Payload: 'static,
@@ -109,7 +109,7 @@ impl<P: BinWrite> PacketCC<P> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 #[binrw]
 #[br(big, import_raw(arg: ReadArgs<()>))]
 pub struct PayloadUnknown {
