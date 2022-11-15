@@ -1,7 +1,8 @@
 use crate::sdb::{TypeInfo, TypeKind};
 
 use anyhow::{anyhow, bail, Result};
-use binrw::{BinRead, BinReaderExt, BinResult, ReadOptions};
+use binrw::meta::{EndianKind, ReadEndian};
+use binrw::{BinRead, BinReaderExt, BinResult, Endian, ReadOptions};
 
 use std::fmt::{Debug, Formatter};
 use std::io::{Cursor, Read, Seek};
@@ -42,6 +43,10 @@ impl Debug for Value {
             Self::String(s) => write!(f, "\"{s}\""),
         }
     }
+}
+
+impl ReadEndian for Value {
+    const ENDIAN: EndianKind = EndianKind::Endian(Endian::Big);
 }
 
 impl Value {

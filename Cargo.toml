@@ -9,7 +9,7 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.56"
 arrayvec = "0.7.2"
-binrw = "0.8.4"
+binrw = "0.10.0"
 clap = { version = "4.0.24", features = ["derive", "wrap_help"] }
 ctrlc = "3.2.2"
 hex-literal = "0.3.4"

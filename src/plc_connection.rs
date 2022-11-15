@@ -54,7 +54,7 @@ impl Connection {
         <P as BinWrite>::Args: Default,
     {
         let mut buf = Vec::with_capacity(0);
-        pkt.write_to(&mut Cursor::new(&mut buf))
+        pkt.write_be(&mut Cursor::new(&mut buf))
             .context("Writing packet to send buffer.")?;
         // hex(&buf);
         self.stream
