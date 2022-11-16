@@ -212,6 +212,18 @@ impl FromArgMatches for RwCmds<String, String> {
 
 static CTRL_C_PRESSED: AtomicBool = AtomicBool::new(false);
 
+fn test_cmd(connect: impl FnOnce() -> Result<Connection>) -> Result<()> {
+    // benchmark
+    for _ in 0..100 {
+        sdb::read_sdb_file()?;
+    }
+    return Ok(());
+
+    let conn = &mut connect()?;
+    write_param(conn)?;
+    read_dyn_params(conn)
+}
+
 fn main() -> Result<()> {
     let args: CmdlineArgs = Parser::parse();
 
@@ -229,11 +241,7 @@ fn main() -> Result<()> {
             Commands::PollPressure => poll_pressure(&mut connect()?),
             Commands::SdbDownload => plc_connection::download_sbd(&mut connect()?),
             Commands::SdbPrint => sdb::print_sdb_file(),
-            Commands::Test => {
-                let conn = &mut connect()?;
-                write_param(conn)?;
-                read_dyn_params(conn)
-            }
+            Commands::Test => return test_cmd(connect),
         };
     }
     if args.readwrite.is_empty() {

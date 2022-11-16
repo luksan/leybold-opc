@@ -7,6 +7,7 @@ use rhexdump::hexdump;
 
 use std::fmt::{Debug, Formatter};
 use std::io::{Read, Seek};
+use std::ops::Deref;
 use std::rc::{Rc, Weak};
 
 pub use api::*;
@@ -178,8 +179,8 @@ pub struct Sdb {
     len_xx: u32, // maybe a length field
     #[br(magic = 0u32, temp)] // consume four NUL bytes with magic
     param_cnt: u32,
-    #[br(count = param_cnt)]
-    parameters: Vec<SdbParam>,
+    #[br(args(param_cnt,))]
+    parameters: SdbParams,
 
     #[br(magic = 6u32, temp)]
     tail_len: u32,
@@ -188,6 +189,33 @@ pub struct Sdb {
 }
 
 pub type SdbRef = Rc<Sdb>;
+
+#[derive(Clone, Debug)]
+struct SdbParams(Box<[SdbParam]>);
+
+impl BinRead for SdbParams {
+    type Args = (u32,);
+
+    fn read_options<R: Read + Seek>(
+        reader: &mut R,
+        options: &ReadOptions,
+        args: Self::Args,
+    ) -> BinResult<Self> {
+        let count = args.0 as usize;
+        let mut x = Vec::with_capacity(count);
+        for _ in 0..count {
+            x.push(SdbParam::read_options(reader, options, ())?);
+        }
+        Ok(Self(x.into_boxed_slice()))
+    }
+}
+
+impl Deref for SdbParams {
+    type Target = [SdbParam];
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 impl Sdb {
     pub fn get_ref(&self) -> SdbRef {
@@ -408,7 +436,7 @@ pub fn print_sdb_file() -> Result<()> {
         );
     }
 
-    for p in &sdb.parameters {
+    for p in &*sdb.parameters {
         let descr = sdb.get_desc(p.type_descr_idx).expect("Invalid type idx.");
         let name = p.name.try_as_str().expect("Name not valid utf-8");
         let kind = format!("{:?}~{}", descr.kind, descr.read_len());
