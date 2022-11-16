@@ -2,7 +2,7 @@
 
 use anyhow::{bail, Context, Result};
 use arrayvec::ArrayVec;
-use binrw::{binread, BinRead, BinReaderExt, BinResult, Endian, ReadOptions, VecArgs};
+use binrw::{binread, BinRead, BinResult, ReadOptions, VecArgs};
 use rhexdump::hexdump;
 
 use std::fmt::{Debug, Formatter};
@@ -258,7 +258,7 @@ struct TypeDescription {
     kind: TypeKind,
     type_size: u32,
     description: SdbStr,
-    #[br(args (kind, len - 4*4 - 2 - description.len as u32))]
+    #[br(args(kind,))]
     payload: TypeDescPayload,
 }
 
@@ -305,20 +305,16 @@ enum TypeDescPayload {
     Array(ArrayDesc),
     Struct(Vec<StructMember>),
     Pointer(u32),
-    Other(Vec<u8>),
 }
 
 impl BinRead for TypeDescPayload {
-    type Args = (TypeKind, u32); // type, payload len
+    type Args = (TypeKind,);
 
     fn read_options<R: Read + Seek>(
         reader: &mut R,
         options: &ReadOptions,
         args: Self::Args,
     ) -> BinResult<Self> {
-        if args.1 == 0 {
-            return Ok(Self::None);
-        }
         Ok(match args.0 {
             TypeKind::Array => Self::Array(ArrayDesc::read_options(reader, options, ())?),
             TypeKind::Data => {
@@ -327,13 +323,7 @@ impl BinRead for TypeDescPayload {
                 Self::Struct(Vec::<StructMember>::read_options(reader, options, args)?)
             }
             TypeKind::Pointer => Self::Pointer(u32::read_options(reader, options, ())?),
-            _ => Self::Other(reader.read_type_args(
-                Endian::Little,
-                VecArgs {
-                    count: args.1 as usize,
-                    inner: (),
-                },
-            )?),
+            _ => Self::None,
         })
     }
 }
@@ -374,6 +364,7 @@ impl Debug for SdbParam {
 #[derive(Clone, PartialEq)]
 #[br(little)]
 struct SdbStr {
+    #[br(temp)]
     len: u16,
     #[br(args(len), parse_with = parse_arrayvec)]
     s: SdbStrStorage,
