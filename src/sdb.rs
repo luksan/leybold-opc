@@ -376,17 +376,19 @@ impl Debug for SdbParam {
 struct SdbStr {
     len: u16,
     #[br(args(len), parse_with = parse_arrayvec)]
-    s: ArrayVec<u8, 81>,
+    s: SdbStrStorage,
 }
+const SDB_STR_MAX_LEN: usize = 81;
+type SdbStrStorage = ArrayVec<u8, SDB_STR_MAX_LEN>;
 
 fn parse_arrayvec<R: Read + Seek>(
     reader: &mut R,
     _opts: &ReadOptions,
     args: (u16,),
-) -> BinResult<ArrayVec<u8, 81>> {
+) -> BinResult<SdbStrStorage> {
     assert!(args.0 <= 81);
     let len = args.0 as usize;
-    let mut x = ArrayVec::from([0; 81]);
+    let mut x = SdbStrStorage::from([0; SDB_STR_MAX_LEN]);
     x.truncate(len);
     reader.read_exact(&mut x)?;
     while Some(&0) == x.last() {
