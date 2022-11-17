@@ -377,11 +377,12 @@ fn parse_arrayvec<R: Read + Seek>(
     _opts: &ReadOptions,
     args: (u16,),
 ) -> BinResult<SdbStrStorage> {
-    assert!(args.0 <= 81);
+    assert!(args.0 as usize <= SDB_STR_MAX_LEN);
     let len = args.0 as usize;
     let mut x = SdbStrStorage::from([0; SDB_STR_MAX_LEN]);
     x.truncate(len);
     reader.read_exact(&mut x)?;
+    // "len" includes 0 to 3 bytes of NUL padding 
     while Some(&0) == x.last() {
         x.pop();
     }
