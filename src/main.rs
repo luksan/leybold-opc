@@ -294,7 +294,7 @@ fn execute_queries(
         // build read set
         if let Some(Rw::Read(param)) = param {
             query_builder.add_param(param.clone());
-            continue;
+            continue; // Batch consecutive parameter reads into one read request.
         }
         // perform read query
         if !query_builder.is_empty() {

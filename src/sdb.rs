@@ -382,7 +382,7 @@ fn parse_arrayvec<R: Read + Seek>(
     let mut x = SdbStrStorage::from([0; SDB_STR_MAX_LEN]);
     x.truncate(len);
     reader.read_exact(&mut x)?;
-    // "len" includes 0 to 3 bytes of NUL padding 
+    // "len" includes 0 to 3 bytes of NUL padding
     while Some(&0) == x.last() {
         x.pop();
     }
