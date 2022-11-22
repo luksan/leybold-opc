@@ -8,7 +8,9 @@ use clap::{
 use rhexdump::hexdump;
 
 use leybold_opc_rs::opc_values::Value;
-use leybold_opc_rs::packets::{PacketCC, ParamQuerySetBuilder, ParamWrite, PayloadParamWrite};
+use leybold_opc_rs::packets::{
+    cc_payloads::*, PacketCC, ParamQuerySetBuilder, ParamWrite, PayloadParamWrite,
+};
 use leybold_opc_rs::plc_connection::{self, Connection};
 use leybold_opc_rs::sdb;
 
@@ -213,15 +215,18 @@ impl FromArgMatches for RwCmds<String, String> {
 static CTRL_C_PRESSED: AtomicBool = AtomicBool::new(false);
 
 fn test_cmd(connect: impl FnOnce() -> Result<Connection>) -> Result<()> {
-    // benchmark
-    for _ in 0..100 {
-        sdb::read_sdb_file()?;
-    }
-    return Ok(());
-
     let conn = &mut connect()?;
-    write_param(conn)?;
-    read_dyn_params(conn)
+
+    return plc_connection::download_sbd(conn);
+
+    let pkt = PacketCC::new(SdbVersionQuery::new());
+    let r = conn.query(&pkt)?;
+    println!("{:#?}\n{}", r, hexdump(r.payload.data.as_slice()));
+
+    // write_param(conn)?;
+    // read_dyn_params(conn)
+
+    Ok(())
 }
 
 fn main() -> Result<()> {

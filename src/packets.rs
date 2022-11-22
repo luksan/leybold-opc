@@ -51,7 +51,7 @@ where
     pub tail: Vec<u8>,
 }
 
-pub trait QueryPacket: BinWrite<Args = ()> {
+pub trait QueryPacket {
     type Response: BinRead;
 }
 
@@ -122,53 +122,6 @@ impl<T: AsRef<[u8]>> From<T> for PayloadUnknown {
         Self {
             data: d.as_ref().to_vec(),
         }
-    }
-}
-
-#[binwrite]
-#[derive(Clone, Debug)]
-#[bw(big, magic = 0x34u8)]
-pub struct PayloadSdbVersionQuery {
-    x: &'static [u8],
-}
-
-impl PayloadSdbVersionQuery {
-    pub fn new() -> Self {
-        Self {
-            x: b"\0\0\x0eDOWNLOAD.SDB\0\0",
-        }
-    }
-}
-
-#[binread]
-#[derive(Clone, Debug)]
-#[br(big, import_raw(_hdr:ReadArgs<()>))]
-pub struct PayloadSdbVersionResponse {
-    error_code: u16,
-    sbd_size: u32,
-    // The remaining bytes are unknown
-}
-
-#[binread]
-#[derive(Clone)]
-#[br(big, import_raw(_hdr: ReadArgs<()>))]
-pub struct PayloadSdbDownload {
-    #[br(try_map(|x:u32|match x {0 => Ok(false), 1 => Ok(true), _ => Err(anyhow!("Unexpected in continues field."))}))]
-    pub continues: bool, // 0 if this is the last packet, 1 otherwise
-    #[br(temp)]
-    pub sdb_len: u16,
-    #[br(count = sdb_len)]
-    pub sdb_part: Vec<u8>,
-}
-
-impl Debug for PayloadSdbDownload {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "PayloadSdbDownload {{\n continues: {},\n{}}}",
-            self.continues,
-            hexdump(&self.sdb_part[0..100]),
-        )
     }
 }
 
@@ -332,5 +285,129 @@ impl ParamQuerySet {
         let mut p = PacketCC::new(PayloadParamsRead::new(&self.0));
         p.hdr.one_if_data_poll_maybe = 1;
         p
+    }
+}
+
+pub mod cc_payloads {
+    /// Specific command-reply CC packet payloads for various purposes,
+    /// reconstructed from Wireguard captures.
+    use super::*;
+
+    #[binwrite]
+    #[derive(Clone, Debug)]
+    #[bw(big, magic = 0x11u8)]
+    pub struct InstrumentVersionQuery;
+
+    impl QueryPacket for InstrumentVersionQuery {
+        type Response = InstrumentVersionResponse;
+    }
+
+    #[binread]
+    #[derive(Clone, Debug)]
+    #[br(big, import_raw(args: ReadArgs<()>))]
+    pub struct InstrumentVersionResponse {
+        error_code: u16,  // ??
+        sdb_version: u32, // 0x 00 02 53 34
+        u32_0: u32,       // 0x 57 db e3 ce
+        #[br(count = args.hdr.payload_len - (2+4+4))]
+        str_descr: Vec<u8>,
+    }
+
+    #[binwrite]
+    #[derive(Clone, Debug)]
+    #[bw(big, magic = 0x34u8)]
+    pub struct SdbVersionQuery {
+        x: &'static [u8],
+    }
+
+    impl SdbVersionQuery {
+        // https://product-help.schneider-electric.com/Machine%20Expert/V1.1/en/OPCDA/OPCDA/Specific_Information/Specific_Information-10.htm
+        pub fn new() -> Self {
+            Self {
+                x: b"\0\0\x0eDOWNLOAD.SDB\0\0",
+            }
+        }
+
+        pub fn pkt() -> PacketCC<Self> {
+            PacketCC::new(Self::new())
+        }
+    }
+
+    impl QueryPacket for SdbVersionQuery {
+        type Response = SdbVersionResponse;
+    }
+
+    #[binread]
+    #[derive(Clone, Debug)]
+    #[br(big, import_raw(_hdr:ReadArgs<()>))]
+    pub struct SdbVersionResponse {
+        pub error_code: u16,
+        pub sbd_size: u32,
+        pub data: [u8; 4 * 4],
+    }
+
+    fn query_download_sdb() -> PacketCC {
+        let payload = PayloadUnknown::from(b"1\0\0\x0eDOWNLOAD.SDB\0\0");
+        PacketCC::new(payload)
+    }
+    #[binwrite]
+    #[derive(Clone, Debug)]
+    #[bw(big, magic = 0x31u8)]
+    pub struct SdbDownloadRequest {
+        x: &'static [u8],
+    }
+
+    impl SdbDownloadRequest {
+        // https://product-help.schneider-electric.com/Machine%20Expert/V1.1/en/OPCDA/OPCDA/Specific_Information/Specific_Information-10.htm
+        pub fn new() -> Self {
+            Self {
+                x: b"\0\0\x0eDOWNLOAD.SDB\0\0",
+            }
+        }
+
+        pub fn pkt() -> PacketCC<Self> {
+            PacketCC::new(Self::new())
+        }
+    }
+
+    impl QueryPacket for SdbDownloadRequest {
+        type Response = SdbDownload;
+    }
+
+    #[binwrite]
+    #[derive(Clone, Debug)]
+    #[bw(big, magic = 0x32u8)]
+    pub struct SdbDownloadContinue;
+
+    impl SdbDownloadContinue {
+        pub fn pkt() -> PacketCC<Self> {
+            PacketCC::new(Self)
+        }
+    }
+
+    impl QueryPacket for SdbDownloadContinue {
+        type Response = SdbDownload;
+    }
+
+    #[binread]
+    #[derive(Clone)]
+    #[br(big, import_raw(_hdr: ReadArgs<()>))]
+    pub struct SdbDownload {
+        #[br(try_map(|x:u32|match x {0 => Ok(false), 1 => Ok(true), _ => Err(anyhow!("Unexpected in continues field."))}))]
+        pub continues: bool, // 0 if this is the last packet, 1 otherwise
+        pub pkt_sdb_part_len: u16,
+        #[br(count = pkt_sdb_part_len)]
+        pub sdb_part: Vec<u8>,
+    }
+
+    impl Debug for SdbDownload {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            write!(
+                f,
+                "PayloadSdbDownload {{\n continues: {},\n{}}}",
+                self.continues,
+                hexdump(&self.sdb_part[0..100]),
+            )
+        }
     }
 }

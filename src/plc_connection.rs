@@ -1,7 +1,5 @@
-use crate::packets::{
-    PacketCC, PacketCCHeader, PayloadSdbDownload, PayloadSdbVersionQuery,
-    PayloadSdbVersionResponse, PayloadUnknown, QueryPacket,
-};
+use crate::packets::cc_payloads::*;
+use crate::packets::{PacketCC, PacketCCHeader, QueryPacket};
 
 use anyhow::{bail, Context, Result};
 use binrw::{BinRead, BinReaderExt, BinWrite};
@@ -24,7 +22,7 @@ impl Connection {
 
     pub fn query<Cmd>(&mut self, pkt: &PacketCC<Cmd>) -> Result<PacketCC<Cmd::Response>>
     where
-        Cmd: QueryPacket,
+        Cmd: QueryPacket + BinWrite<Args = ()>,
         PacketCC<Cmd::Response>: BinRead<Args = ()>,
     {
         self.send(pkt)?;
@@ -39,7 +37,7 @@ impl Connection {
         response_args: Args,
     ) -> Result<PacketCC<Cmd::Response>>
     where
-        Cmd: QueryPacket,
+        Cmd: QueryPacket + BinWrite<Args = ()>,
         PacketCC<Cmd::Response>: BinRead<Args = Args>,
     {
         self.send(pkt)?;
@@ -108,48 +106,37 @@ impl Connection {
     }
 }
 
-fn _query_fw_ver() -> PacketCC<PayloadUnknown> {
-    let payload = PayloadUnknown::from([0x11]);
-    PacketCC::new(payload)
-}
-
-fn query_download_sdb() -> PacketCC {
-    let payload = PayloadUnknown::from(b"1\0\0\x0eDOWNLOAD.SDB\0\0");
-    PacketCC::new(payload)
-}
-
-fn query_continue_download() -> PacketCC {
-    let payload = PayloadUnknown::from([b'2']); // 0x32
-    PacketCC::new(payload)
-}
-
 pub fn download_sbd(conn: &mut Connection) -> anyhow::Result<()> {
+    let sdb_info = conn.query(&SdbVersionQuery::pkt())?;
+    let sdb_len = sdb_info.payload.sbd_size as usize;
+
     let mut sdb_file = std::fs::File::create("sdb_new.dat")?;
     let mut pkt_cnt = 0;
-    conn.send(&query_download_sdb())?;
+    let mut r = conn.query(&SdbDownloadRequest::pkt())?;
+    let tot_est = (sdb_len / r.payload.pkt_sdb_part_len as usize) + 1;
     loop {
-        let r = conn.receive_response::<PayloadSdbDownload>()?;
         sdb_file.write_all(r.payload.sdb_part.as_slice())?;
 
         pkt_cnt += 1;
         conn.send_66_ack()?;
 
-        if pkt_cnt > 1000 {
-            bail!("Received more than 1000 packets.")
+        if pkt_cnt > tot_est * 2 {
+            bail!("Received more than twice the amount of expected sdb download packets.")
         }
-        println!("Pkt cnt {pkt_cnt} / 838.");
-        if r.payload.continues {
+        println!("Pkt cnt {pkt_cnt} / {tot_est}.");
+        if !r.payload.continues {
+            println!("Download complete.");
             break;
         }
-        conn.send(&query_continue_download())?;
+        r = conn.query(&SdbDownloadContinue::pkt())?;
     }
     conn.send_66_ack()?;
     Ok(())
 }
 
 fn _check_sdb(conn: &mut Connection) -> anyhow::Result<()> {
-    conn.send(&PacketCC::new(PayloadSdbVersionQuery::new()))?;
-    let r = conn.receive_response::<PayloadSdbVersionResponse>()?;
+    conn.send(&PacketCC::new(SdbVersionQuery::new()))?;
+    let r = conn.receive_response::<SdbVersionResponse>()?;
     conn.send_66_ack()?;
     println!("{r:?}\n{}", hexdump(&r.tail));
 

@@ -6,8 +6,9 @@ use binrw::{binread, BinRead, BinResult, ReadOptions, VecArgs};
 use rhexdump::hexdump;
 
 use std::fmt::{Debug, Formatter};
-use std::io::{Read, Seek};
+use std::io::{BufReader, Read, Seek};
 use std::ops::Deref;
+use std::path::Path;
 use std::rc::{Rc, Weak};
 
 pub use api::*;
@@ -17,7 +18,6 @@ pub mod api {
     pub use super::{Sdb, TypeKind};
     use crate::opc_values::Value;
     use std::hash::{Hash, Hasher};
-    use std::io::Cursor;
     use std::rc::Rc;
 
     #[derive(Clone)]
@@ -141,13 +141,7 @@ pub mod api {
     }
 
     pub fn read_sdb_file() -> Result<Rc<Sdb>> {
-        let mut file = Vec::new();
-        std::fs::File::open("sdb.dat")?.read_to_end(&mut file)?;
-        let mut sdb = Sdb::read(&mut Cursor::new(file)).context("Failed to parse SDB file.")?;
-        Ok(Rc::new_cyclic(|weak| {
-            sdb.self_ref = weak.clone();
-            sdb
-        }))
+        Sdb::from_file("sdb.dat")
     }
 }
 
@@ -218,6 +212,15 @@ impl Deref for SdbParams {
 }
 
 impl Sdb {
+    pub fn from_file(file: impl AsRef<Path>) -> Result<SdbRef> {
+        let file = std::fs::File::open(file)?;
+        let mut sdb = Sdb::read(&mut BufReader::new(file)).context("Failed to parse SDB file.")?;
+        Ok(Rc::new_cyclic(|weak| {
+            sdb.self_ref = weak.clone();
+            sdb
+        }))
+    }
+
     pub fn get_ref(&self) -> SdbRef {
         self.self_ref.upgrade().unwrap()
     }
