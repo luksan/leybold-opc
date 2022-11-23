@@ -143,8 +143,7 @@ pub struct ParamsReadQuery {
     param_count: u32,
     #[br(count = param_count)]
     params: Vec<ParamRead>,
-    #[bw(magic = 0x00_02_53_34_u32)]
-    end: (),
+    sdb_id: u32,
 }
 
 impl QueryPacket for ParamsReadQuery {
@@ -156,7 +155,7 @@ impl QueryPacket for ParamsReadQuery {
 }
 
 impl ParamsReadQuery {
-    pub fn new(query_set: ParamQuerySet, params: &[sdb::Parameter]) -> Self {
+    pub fn new(sdb: &sdb::Sdb, query_set: ParamQuerySet, params: &[sdb::Parameter]) -> Self {
         let params = params
             .iter()
             .map(|param| ParamRead::new(param.id(), param.type_info().response_len() as u32))
@@ -164,7 +163,7 @@ impl ParamsReadQuery {
         Self {
             query_set,
             params,
-            end: (),
+            sdb_id: sdb.sdb_id,
         }
     }
 }
@@ -290,20 +289,16 @@ impl ParamQuerySetBuilder {
     pub fn add_param(&mut self, param: sdb::Parameter) {
         self.0.push(param);
     }
-    pub fn build_query_set(self) -> ParamQuerySet {
-        ParamQuerySet(self.0.into())
+
+    pub fn create_query_packet(&self) -> PacketCC<ParamsReadQuery> {
+        let qset = ParamQuerySet(self.0.clone().into());
+        let mut p = PacketCC::new(ParamsReadQuery::new(&self.1, qset, &self.0));
+        p.hdr.one_if_data_poll_maybe = 1;
+        p
     }
 
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
-    }
-}
-
-impl ParamQuerySet {
-    pub fn create_query_packet(&self) -> PacketCC<ParamsReadQuery> {
-        let mut p = PacketCC::new(ParamsReadQuery::new(self.clone(), &self.0));
-        p.hdr.one_if_data_poll_maybe = 1;
-        p
     }
 }
 

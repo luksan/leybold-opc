@@ -26,8 +26,6 @@ fn poll_pressure(conn: &mut Connection) -> Result<()> {
     let mut param_set = ParamQuerySetBuilder::new(&sdb);
     param_set.add(".Gauge[1].Parameter[1].Value")?;
 
-    let param_set = param_set.build_query_set();
-
     let mut last_timestamp = 0.0;
     let mut last_time = std::time::Instant::now();
 
@@ -54,12 +52,11 @@ fn read_dyn_params(conn: &mut Connection) -> Result<()> {
     // param_set.add_param(sdb.param_by_name(".Gauge[1].Parameter[1].Value")?);
     // param_set.add_param(sdb.param_by_name(".Gauge[1].Parameter[1].StringValue")?);
 
-    let param_set = param_set.build_query_set();
-
     let r = conn.query(&param_set.create_query_packet())?;
 
-    let resp = &r.payload.data;
-    for (r, p) in resp.iter().zip(param_set.0.iter()) {
+    let resp_values = &r.payload.data;
+    let param_set = &r.payload.query_set.0;
+    for (r, p) in resp_values.iter().zip(param_set.iter()) {
         println!("{} {:?}", p.name(), r);
     }
     println!("Tail data: '{}'", hexdump(&r.tail));
@@ -300,9 +297,9 @@ fn execute_queries(
         }
         // perform read query
         if !query_builder.is_empty() {
-            let query_set = query_builder.build_query_set();
+            let packet = query_builder.create_query_packet();
             query_builder = ParamQuerySetBuilder::new(sdb);
-            let r = conn.query(&query_set.create_query_packet())?;
+            let r = conn.query(&packet)?;
             for (param, value) in r.payload.iter() {
                 println!("{}: {value:?}", param.name());
             }
