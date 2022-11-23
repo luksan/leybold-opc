@@ -156,7 +156,7 @@ pub struct Sdb {
     hdr_len: u32,
     #[br(magic = 1u32)]
     /// Sent at the end of every parameter read packet
-    sdb_id: u32,
+    pub(crate) sdb_id: u32,
     maybe_checksum: u32,
     /// Total size of the SDB in bytes
     total_sbd_size: u32,

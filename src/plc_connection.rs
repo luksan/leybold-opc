@@ -3,7 +3,6 @@ use crate::packets::{PacketCC, PacketCCHeader, QueryPacket};
 
 use anyhow::{bail, Context, Result};
 use binrw::{BinRead, BinReaderExt, BinWrite};
-use rhexdump::hexdump;
 
 use std::io::{Cursor, Read, Write};
 use std::net::{IpAddr, TcpStream};
@@ -23,25 +22,11 @@ impl Connection {
     pub fn query<Cmd>(&mut self, pkt: &PacketCC<Cmd>) -> Result<PacketCC<Cmd::Response>>
     where
         Cmd: QueryPacket + BinWrite<Args = ()>,
-        PacketCC<Cmd::Response>: BinRead<Args = ()>,
+        PacketCC<Cmd::Response>: BinRead,
     {
         self.send(pkt)?;
-        let r = self.receive_response();
-        self.send_66_ack()?;
-        r
-    }
-
-    pub fn query_response_args<Cmd, Args>(
-        &mut self,
-        pkt: &PacketCC<Cmd>,
-        response_args: Args,
-    ) -> Result<PacketCC<Cmd::Response>>
-    where
-        Cmd: QueryPacket + BinWrite<Args = ()>,
-        PacketCC<Cmd::Response>: BinRead<Args = Args>,
-    {
-        self.send(pkt)?;
-        let r = self.receive_response_args(response_args);
+        let args = pkt.payload.get_response_read_arg();
+        let r = self.receive_response_args(args);
         self.send_66_ack()?;
         r
     }
@@ -58,13 +43,6 @@ impl Connection {
         self.stream
             .write_all(buf.as_slice())
             .context("Write to TCP stream failed.")
-    }
-
-    fn receive_response<P>(&mut self) -> anyhow::Result<PacketCC<P>>
-    where
-        PacketCC<P>: BinRead<Args = ()>,
-    {
-        self.receive_response_args(())
     }
 
     fn receive_response_args<P, Args>(&mut self, args: Args) -> anyhow::Result<PacketCC<P>>
@@ -131,14 +109,5 @@ pub fn download_sbd(conn: &mut Connection) -> anyhow::Result<()> {
         r = conn.query(&SdbDownloadContinue::pkt())?;
     }
     conn.send_66_ack()?;
-    Ok(())
-}
-
-fn _check_sdb(conn: &mut Connection) -> anyhow::Result<()> {
-    conn.send(&PacketCC::new(SdbVersionQuery::new()))?;
-    let r = conn.receive_response::<SdbVersionResponse>()?;
-    conn.send_66_ack()?;
-    println!("{r:?}\n{}", hexdump(&r.tail));
-
     Ok(())
 }

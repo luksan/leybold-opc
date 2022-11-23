@@ -42,7 +42,7 @@ impl PacketCCHeader {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PacketCC<Payload = PayloadUnknown>
+pub struct PacketCC<Payload>
 where
     Payload: 'static,
 {
@@ -51,8 +51,13 @@ where
     pub tail: Vec<u8>,
 }
 
-pub trait QueryPacket {
+pub trait QueryPacket
+where
+    PacketCC<Self::Response>: BinRead,
+{
+    /// The type used for decoding the query response
     type Response: BinRead;
+    fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args;
 }
 
 #[derive(Clone)]
@@ -129,7 +134,10 @@ impl<T: AsRef<[u8]>> From<T> for PayloadUnknown {
 #[binwrite]
 #[derive(Clone, Debug)]
 #[bw(big, magic = 0x2e00u16)]
-pub struct PayloadParamsRead {
+pub struct ParamsReadQuery {
+    #[bw(ignore)]
+    query_set: ParamQuerySet,
+
     #[bw(calc = params.len() as u32)]
     #[br(temp)]
     param_count: u32,
@@ -139,17 +147,25 @@ pub struct PayloadParamsRead {
     end: (),
 }
 
-impl QueryPacket for PayloadParamsRead {
-    type Response = PayloadDynResponse;
+impl QueryPacket for ParamsReadQuery {
+    type Response = ParamReadDynResponse;
+
+    fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args {
+        self.query_set.clone()
+    }
 }
 
-impl PayloadParamsRead {
-    pub fn new(params: &[sdb::Parameter]) -> Self {
+impl ParamsReadQuery {
+    pub fn new(query_set: ParamQuerySet, params: &[sdb::Parameter]) -> Self {
         let params = params
             .iter()
             .map(|param| ParamRead::new(param.id(), param.type_info().response_len() as u32))
             .collect();
-        Self { params, end: () }
+        Self {
+            query_set,
+            params,
+            end: (),
+        }
     }
 }
 
@@ -161,19 +177,21 @@ pub struct PayloadParamWrite {
     #[bw(calc = params.len() as u32)]
     param_count: u32,
     params: Vec<ParamWrite>,
-    #[bw(magic = 0x00_02_53_34_u32)]
-    end: (),
+    sdb_id: u32,
 }
 
 impl QueryPacket for PayloadParamWrite {
     type Response = PayloadUnknown;
+    fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args {
+        ()
+    }
 }
 
 impl PayloadParamWrite {
-    pub fn new(params: &[ParamWrite]) -> Self {
+    pub fn new(sdb: &sdb::Sdb, params: &[ParamWrite]) -> Self {
         Self {
             params: params.to_vec(),
-            end: (),
+            sdb_id: sdb.sdb_id,
         }
     }
 }
@@ -217,7 +235,7 @@ impl ParamRead {
 #[binread]
 #[derive(Clone, Debug)]
 #[br(big, import_raw(read_args: ReadArgs<ParamQuerySet>))]
-pub struct PayloadDynResponse {
+pub struct ParamReadDynResponse {
     pub error_code: u16,
     #[br(map(|d:u32| Duration::from_millis(d as u64)))]
     pub timestamp: Duration,
@@ -240,7 +258,7 @@ fn parse_dyn_payload<R: Read + Seek>(
         .collect()
 }
 
-impl PayloadDynResponse {
+impl ParamReadDynResponse {
     pub fn into_hashmap(self) -> HashMap<sdb::Parameter, Value> {
         self.query_set
             .0
@@ -275,14 +293,15 @@ impl ParamQuerySetBuilder {
     pub fn build_query_set(self) -> ParamQuerySet {
         ParamQuerySet(self.0.into())
     }
+
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 }
 
 impl ParamQuerySet {
-    pub fn create_query_packet(&self) -> PacketCC<PayloadParamsRead> {
-        let mut p = PacketCC::new(PayloadParamsRead::new(&self.0));
+    pub fn create_query_packet(&self) -> PacketCC<ParamsReadQuery> {
+        let mut p = PacketCC::new(ParamsReadQuery::new(self.clone(), &self.0));
         p.hdr.one_if_data_poll_maybe = 1;
         p
     }
@@ -290,7 +309,7 @@ impl ParamQuerySet {
 
 pub mod cc_payloads {
     /// Specific command-reply CC packet payloads for various purposes,
-    /// reconstructed from Wireguard captures.
+    /// reconstructed from Wireshark captures.
     use super::*;
 
     #[binwrite]
@@ -300,6 +319,9 @@ pub mod cc_payloads {
 
     impl QueryPacket for InstrumentVersionQuery {
         type Response = InstrumentVersionResponse;
+        fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args {
+            ()
+        }
     }
 
     #[binread]
@@ -335,6 +357,9 @@ pub mod cc_payloads {
 
     impl QueryPacket for SdbVersionQuery {
         type Response = SdbVersionResponse;
+        fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args {
+            ()
+        }
     }
 
     #[binread]
@@ -346,10 +371,6 @@ pub mod cc_payloads {
         pub data: [u8; 4 * 4],
     }
 
-    fn query_download_sdb() -> PacketCC {
-        let payload = PayloadUnknown::from(b"1\0\0\x0eDOWNLOAD.SDB\0\0");
-        PacketCC::new(payload)
-    }
     #[binwrite]
     #[derive(Clone, Debug)]
     #[bw(big, magic = 0x31u8)]
@@ -372,6 +393,9 @@ pub mod cc_payloads {
 
     impl QueryPacket for SdbDownloadRequest {
         type Response = SdbDownload;
+        fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args {
+            ()
+        }
     }
 
     #[binwrite]
@@ -387,6 +411,9 @@ pub mod cc_payloads {
 
     impl QueryPacket for SdbDownloadContinue {
         type Response = SdbDownload;
+        fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args {
+            ()
+        }
     }
 
     #[binread]

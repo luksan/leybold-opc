@@ -8,15 +8,12 @@ use clap::{
 use rhexdump::hexdump;
 
 use leybold_opc_rs::opc_values::Value;
-use leybold_opc_rs::packets::{
-    cc_payloads::*, PacketCC, ParamQuerySetBuilder, ParamWrite, PayloadParamWrite,
-};
+use leybold_opc_rs::packets::{PacketCC, ParamQuerySetBuilder, ParamWrite, PayloadParamWrite};
 use leybold_opc_rs::plc_connection::{self, Connection};
 use leybold_opc_rs::sdb;
 
 use std::net::IpAddr;
 use std::ops::Deref;
-use std::rc::Rc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::SeqCst;
 
@@ -36,7 +33,7 @@ fn poll_pressure(conn: &mut Connection) -> Result<()> {
 
     let pkt = param_set.create_query_packet();
     loop {
-        let r = conn.query_response_args(&pkt, param_set.clone())?;
+        let r = conn.query(&pkt)?;
         let now = std::time::Instant::now();
         println!(
             "time delta {:.2} == {:.2} ms",
@@ -59,7 +56,7 @@ fn read_dyn_params(conn: &mut Connection) -> Result<()> {
 
     let param_set = param_set.build_query_set();
 
-    let r = conn.query_response_args(&param_set.create_query_packet(), param_set.clone())?;
+    let r = conn.query(&param_set.create_query_packet())?;
 
     let resp = &r.payload.data;
     for (r, p) in resp.iter().zip(param_set.0.iter()) {
@@ -73,10 +70,10 @@ fn write_param(conn: &mut Connection) -> Result<()> {
     let sdb = sdb::read_sdb_file()?;
     let param = sdb.param_by_name(".CockpitUser")?;
 
-    let packet = PacketCC::new(PayloadParamWrite::new(&[ParamWrite::new(
-        &param,
-        b"User1234",
-    )?]));
+    let packet = PacketCC::new(PayloadParamWrite::new(
+        &sdb,
+        &[ParamWrite::new(&param, b"User1234")?],
+    ));
     let r = conn.query(&packet)?;
     println!("{r:?}");
     Ok(())
@@ -219,14 +216,14 @@ fn test_cmd(connect: impl FnOnce() -> Result<Connection>) -> Result<()> {
 
     return plc_connection::download_sbd(conn);
 
-    let pkt = PacketCC::new(SdbVersionQuery::new());
-    let r = conn.query(&pkt)?;
-    println!("{:#?}\n{}", r, hexdump(r.payload.data.as_slice()));
+    // let pkt = PacketCC::new(SdbVersionQuery::new());
+    // let r = conn.query(&pkt)?;
+    // println!("{:#?}\n{}", r, hexdump(r.payload.data.as_slice()));
 
     // write_param(conn)?;
     // read_dyn_params(conn)
 
-    Ok(())
+    // Ok(())
 }
 
 fn main() -> Result<()> {
@@ -285,7 +282,7 @@ fn main() -> Result<()> {
 }
 
 fn execute_queries(
-    sdb: &Rc<sdb::Sdb>,
+    sdb: &sdb::Sdb,
     readwrite: &RwCmds<sdb::Parameter, Value>,
     conn: &mut Connection,
 ) -> Result<()> {
@@ -305,8 +302,7 @@ fn execute_queries(
         if !query_builder.is_empty() {
             let query_set = query_builder.build_query_set();
             query_builder = ParamQuerySetBuilder::new(sdb);
-            let r =
-                conn.query_response_args(&query_set.create_query_packet(), query_set.clone())?;
+            let r = conn.query(&query_set.create_query_packet())?;
             for (param, value) in r.payload.iter() {
                 println!("{}: {value:?}", param.name());
             }
@@ -319,7 +315,7 @@ fn execute_queries(
         // perform write
         if let Some(Rw::Write(param, value)) = param {
             let x = ParamWrite::new(param, value)?;
-            let r = conn.query(&PacketCC::new(PayloadParamWrite::new(&[x])))?;
+            let r = conn.query(&PacketCC::new(PayloadParamWrite::new(&sdb, &[x])))?;
             dbg!(r);
         }
         // repeat until iterator empty
