@@ -28,7 +28,7 @@ impl Debug for Value {
             Self::Array(vec) => {
                 write!(f, "Array[{}] {vec:pad$?}", vec.len())
             }
-            Self::Matrix(m) => write!(f, "{m:?})"),
+            Self::Matrix(m) => write!(f, "{m:?}"),
             Self::Struct(s) => {
                 writeln!(f, "Struct {{")?;
                 for m in s {
@@ -83,8 +83,16 @@ impl Value {
                         }
                         Value::Array(v)
                     }
-                    [_a, _b] => {
-                        todo!("Have to check the order the elements are stored.")
+                    [a, b] => {
+                        let mut outer = Vec::with_capacity(a);
+                        for _ in 0..a {
+                            let mut inner = Vec::with_capacity(b);
+                            for _ in 0..b {
+                                inner.push(Self::parse_param(cur, &ty)?);
+                            }
+                            outer.push(inner);
+                        }
+                        Value::Matrix(outer)
                     }
                 }
             }
