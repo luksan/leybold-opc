@@ -8,7 +8,7 @@ use crate::opc_values::{EncodeOpcValue, Value};
 use crate::sdb;
 
 use std::collections::HashMap;
-use std::fmt::{Debug, Formatter};
+use std::fmt::{self, Debug, Formatter};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::rc::Rc;
 use std::time::Duration;
@@ -232,7 +232,7 @@ impl ParamRead {
 }
 
 #[binread]
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 #[br(big, import_raw(read_args: ReadArgs<ParamQuerySet>))]
 pub struct ParamReadDynResponse {
     pub error_code: u16,
@@ -255,6 +255,27 @@ fn parse_dyn_payload<R: Read + Seek>(
             Value::read_args(reader, param.type_info())
         })
         .collect()
+}
+
+impl Debug for ParamReadDynResponse {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        struct DbgMapHelper<'a>(&'a ParamQuerySet, &'a [Value]);
+        impl Debug for DbgMapHelper<'_> {
+            fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+                let mut m = f.debug_map();
+                for (p, v) in self.0 .0.iter().zip(self.1.iter()) {
+                    m.entry(&p.name(), v);
+                }
+                m.finish()
+            }
+        }
+        let mut s = f.debug_struct("ParamReadDynResponse");
+        s.field("error_code", &self.error_code);
+        s.field("timestamp", &self.timestamp);
+        let p = DbgMapHelper(&self.query_set, self.data.as_slice());
+        s.field("params", &p);
+        s.finish()
+    }
 }
 
 impl ParamReadDynResponse {
