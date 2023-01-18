@@ -102,6 +102,7 @@ enum Commands {
     PollPressure,
     SdbDownload,
     SdbPrint,
+    ReadAllParams,
     Test,
 }
 
@@ -208,6 +209,26 @@ impl FromArgMatches for RwCmds<String, String> {
 
 static CTRL_C_PRESSED: AtomicBool = AtomicBool::new(false);
 
+fn cmd_read_all(conn: &mut Connection) -> Result<()> {
+    let sdb = sdb::read_sdb_file()?;
+    let mut params = ParamQuerySetBuilder::new(&sdb);
+    let mut tot_response_len = 0;
+    for param in sdb.parameters() {
+        tot_response_len += param.type_info().response_len();
+        params.add_param(param);
+        if tot_response_len < 0x300 {
+            continue;
+        }
+
+        let r = conn.query(&params.create_query_packet())?;
+        println!("{:#?}", r);
+
+        params = ParamQuerySetBuilder::new(&sdb);
+        tot_response_len = 0;
+    }
+    Ok(())
+}
+
 fn test_cmd(connect: impl FnOnce() -> Result<Connection>) -> Result<()> {
     let conn = &mut connect()?;
 
@@ -240,7 +261,8 @@ fn main() -> Result<()> {
             Commands::PollPressure => poll_pressure(&mut connect()?),
             Commands::SdbDownload => plc_connection::download_sbd(&mut connect()?),
             Commands::SdbPrint => sdb::print_sdb_file(),
-            Commands::Test => return test_cmd(connect),
+            Commands::ReadAllParams => cmd_read_all(&mut connect()?),
+            Commands::Test => test_cmd(connect),
         };
     }
     if args.readwrite.is_empty() {

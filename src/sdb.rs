@@ -225,6 +225,21 @@ impl Sdb {
         self.self_ref.upgrade().unwrap()
     }
 
+    /// Returns an iterator over all the parameters in the SDB.
+    pub fn parameters(&self) -> impl Iterator<Item = Parameter> + '_ {
+        self.parameters
+            .iter()
+            .map(|p| p.type_descr_idx)
+            .enumerate()
+            .map(|(param_idx, type_idx)| {
+                Parameter::new(
+                    self.self_ref.upgrade().unwrap(),
+                    param_idx,
+                    type_idx as usize,
+                )
+            })
+    }
+
     pub fn param_by_name(&self, name: &str) -> Result<Parameter> {
         let param = self
             .parameters
