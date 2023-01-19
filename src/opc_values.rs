@@ -1,15 +1,17 @@
-use crate::sdb::{TypeInfo, TypeKind};
+use std::fmt::{Debug, Formatter};
+use std::io::{Cursor, Read, Seek};
 
 use anyhow::{anyhow, bail, Result};
 use binrw::meta::{EndianKind, ReadEndian};
 use binrw::{BinRead, BinReaderExt, BinResult, Endian, ReadOptions};
+use serde::Serialize;
 
-use std::fmt::{Debug, Formatter};
-use std::io::{Cursor, Read, Seek};
+use crate::sdb::{TypeInfo, TypeKind};
 
 /// Used when parsing the response from the instrument,
 /// for converting OPC types to native Rust types.
-#[derive(Clone)]
+#[derive(Clone, Serialize)]
+#[serde(untagged)]
 pub enum Value {
     /// A Vec with Values
     Array(Vec<Value>),
@@ -18,7 +20,15 @@ pub enum Value {
     Int(i64),
     Float(f32),
     String(String),
+    #[serde(with = "tuple_vec_map")]
     Struct(Vec<(String, Value)>),
+}
+
+#[test]
+fn test_value_serialize() {
+    let v = Value::Struct(vec![("field_1".to_string(), Value::Int(4))]);
+    let j = serde_json::ser::to_string(&v).unwrap();
+    assert_eq!(j, "{\"field_1\":4}");
 }
 
 impl Debug for Value {

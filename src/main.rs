@@ -6,6 +6,7 @@ use clap::{
     FromArgMatches, Parser, Subcommand,
 };
 use rhexdump::hexdump;
+use serde::ser::*;
 
 use leybold_opc_rs::opc_values::Value;
 use leybold_opc_rs::packets::{PacketCC, ParamQuerySetBuilder, ParamWrite, PayloadParamWrite};
@@ -213,6 +214,8 @@ fn cmd_read_all(conn: &mut Connection) -> Result<()> {
     let sdb = sdb::read_sdb_file()?;
     let mut params = ParamQuerySetBuilder::new(&sdb);
     let mut tot_response_len = 0;
+    let mut serializer = serde_json::Serializer::pretty(std::io::stdout());
+    let mut json_map = serializer.serialize_map(None)?;
     for param in sdb.parameters() {
         tot_response_len += param.type_info().response_len();
         params.add_param(param);
@@ -221,11 +224,17 @@ fn cmd_read_all(conn: &mut Connection) -> Result<()> {
         }
 
         let r = conn.query(&params.create_query_packet())?;
-        println!("{:#?}", r);
+
+        for (param, value) in r.payload.iter() {
+            json_map.serialize_key(param.name())?;
+            json_map.serialize_value(value)?;
+        }
 
         params = ParamQuerySetBuilder::new(&sdb);
         tot_response_len = 0;
     }
+    SerializeMap::end(json_map)?;
+    println!(); // newline after json output
     Ok(())
 }
 
