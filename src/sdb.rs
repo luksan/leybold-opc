@@ -105,32 +105,25 @@ pub mod api {
         }
 
         pub fn array_info(&self) -> Option<(TypeInfo, [usize; 2])> {
-            if let TypeDescPayload::Array(ref arr) = self.descr().payload {
-                let mut dims = [0; 2];
-                for d in 0..arr.dims.len() {
-                    let x = arr.dims[d];
-                    dims[d] = (x.1 - x.0 + 1) as usize;
-                }
-                Some((Self::new(self.sdb.clone(), arr.type_idx), dims))
-            } else {
-                None
+            let TypeDescPayload::Array(ref arr) = self.descr().payload else { return None; };
+            let mut dims = [0; 2];
+            for d in 0..arr.dims.len() {
+                let x = arr.dims[d];
+                dims[d] = (x.1 - x.0 + 1) as usize;
             }
+            Some((Self::new(self.sdb.clone(), arr.type_idx), dims))
         }
+
         pub fn struct_info(&self) -> Option<Vec<StructMemberInfo>> {
-            if let TypeDescPayload::Struct(ref v) = self.descr().payload {
-                Some(
-                    v.iter()
-                        .map(|m| {
-                            Some(StructMemberInfo {
-                                name: m.name.try_as_str().ok()?,
-                                type_info: Self::new(self.sdb.clone(), m.type_descr_idx),
-                            })
-                        })
-                        .collect::<Option<Vec<_>>>()?,
-                )
-            } else {
-                None
-            }
+            let TypeDescPayload::Struct(ref v) = self.descr().payload else { return None };
+            v.iter()
+                .map(|m| {
+                    Some(StructMemberInfo {
+                        name: m.name.try_as_str().ok()?,
+                        type_info: Self::new(self.sdb.clone(), m.type_descr_idx),
+                    })
+                })
+                .collect::<Option<Vec<_>>>()
         }
     }
 
