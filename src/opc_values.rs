@@ -5,6 +5,7 @@ use anyhow::{anyhow, bail, Result};
 use binrw::meta::{EndianKind, ReadEndian};
 use binrw::{BinRead, BinReaderExt, BinResult, Endian, ReadOptions};
 use serde::Serialize;
+use yore::code_pages::CP1252;
 
 use crate::sdb::{TypeInfo, TypeKind};
 
@@ -135,7 +136,7 @@ impl Value {
                 if let Some(nul_pos) = v.iter().position(|&b| b == 0) {
                     v.truncate(nul_pos);
                 }
-                Value::String(String::from_utf8_lossy(&v).to_string())
+                Value::String(CP1252.decode(&v).to_string())
             }
         };
         Ok(value)
@@ -182,7 +183,7 @@ impl EncodeOpcValue for &Value {
             Value::Bool(b) if desc.kind() == TypeKind::Bool => return Ok(vec![*b as u8]),
             Value::Int(i) => return i.opc_encode(desc),
             Value::Float(_) => todo!("Implement OPC value encoding for f32."),
-            Value::String(s) => return s.as_bytes().opc_encode(desc),
+            Value::String(s) => return CP1252.encode(&s)?.opc_encode(desc),
             _ => {}
         }
         bail!("Can't encode value {:?} as {:?}", self, desc.kind())
