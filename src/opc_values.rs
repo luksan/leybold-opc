@@ -129,7 +129,7 @@ impl Value {
                 }
                 Value::Float(cur.read_be::<f32>()?)
             }
-            TypeKind::Time => int!(u32),
+            TypeKind::Time => int!(u32), // TODO: use better representation?
             TypeKind::String => {
                 let mut v = vec![0; param.response_len()];
                 cur.read_exact(v.as_mut_slice())?;
@@ -183,7 +183,7 @@ impl EncodeOpcValue for &Value {
             Value::Bool(b) if desc.kind() == TypeKind::Bool => return Ok(vec![*b as u8]),
             Value::Int(i) => return i.opc_encode(desc),
             Value::Float(_) => todo!("Implement OPC value encoding for f32."),
-            Value::String(s) => return CP1252.encode(&s)?.opc_encode(desc),
+            Value::String(s) => return CP1252.encode(s)?.opc_encode(desc),
             _ => {}
         }
         bail!("Can't encode value {:?} as {:?}", self, desc.kind())

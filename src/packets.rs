@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+#![allow(dead_code, clippy::new_without_default)]
 
 use anyhow::{anyhow, Result};
 use binrw::{binread, binrw, binwrite, BinRead, BinResult, BinWrite, ReadOptions, WriteOptions};
@@ -181,9 +181,7 @@ pub struct PayloadParamWrite {
 
 impl QueryPacket for PayloadParamWrite {
     type Response = PayloadUnknown;
-    fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args {
-        ()
-    }
+    fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args {}
 }
 
 impl PayloadParamWrite {
@@ -335,9 +333,7 @@ pub mod cc_payloads {
 
     impl QueryPacket for InstrumentVersionQuery {
         type Response = InstrumentVersionResponse;
-        fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args {
-            ()
-        }
+        fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args {}
     }
 
     #[binread]
@@ -373,9 +369,7 @@ pub mod cc_payloads {
 
     impl QueryPacket for SdbVersionQuery {
         type Response = SdbVersionResponse;
-        fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args {
-            ()
-        }
+        fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args {}
     }
 
     #[binread]
@@ -409,9 +403,7 @@ pub mod cc_payloads {
 
     impl QueryPacket for SdbDownloadRequest {
         type Response = SdbDownload;
-        fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args {
-            ()
-        }
+        fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args {}
     }
 
     #[binwrite]
@@ -427,9 +419,7 @@ pub mod cc_payloads {
 
     impl QueryPacket for SdbDownloadContinue {
         type Response = SdbDownload;
-        fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args {
-            ()
-        }
+        fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args {}
     }
 
     #[binread]

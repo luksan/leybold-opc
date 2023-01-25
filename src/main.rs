@@ -239,9 +239,7 @@ fn cmd_read_all(conn: &mut Connection) -> Result<()> {
 }
 
 fn test_cmd(connect: impl FnOnce() -> Result<Connection>) -> Result<()> {
-    let conn = &mut connect()?;
-
-    return plc_connection::download_sbd(conn);
+    let _conn = &mut connect()?;
 
     // let pkt = PacketCC::new(SdbVersionQuery::new());
     // let r = conn.query(&pkt)?;
@@ -250,7 +248,7 @@ fn test_cmd(connect: impl FnOnce() -> Result<Connection>) -> Result<()> {
     // write_param(conn)?;
     // read_dyn_params(conn)
 
-    // Ok(())
+    Ok(())
 }
 
 fn main() -> Result<()> {
@@ -343,7 +341,7 @@ fn execute_queries(
         // perform write
         if let Some(Rw::Write(param, value)) = param {
             let x = ParamWrite::new(param, value)?;
-            let r = conn.query(&PacketCC::new(PayloadParamWrite::new(&sdb, &[x])))?;
+            let r = conn.query(&PacketCC::new(PayloadParamWrite::new(sdb, &[x])))?;
             dbg!(r);
         }
         // repeat until iterator empty
