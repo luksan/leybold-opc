@@ -10,6 +10,7 @@ use crate::sdb;
 use std::collections::HashMap;
 use std::fmt::{self, Debug, Formatter};
 use std::io::{Read, Seek, SeekFrom, Write};
+use std::marker::PhantomData;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -42,22 +43,20 @@ impl PacketCCHeader {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PacketCC<Payload>
-where
-    Payload: 'static,
-{
+pub struct PacketCC<'p, Payload: 'p> {
     pub hdr: PacketCCHeader,
     pub payload: Payload,
     pub tail: Vec<u8>,
+    lifetime: PhantomData<&'p Payload>,
 }
 
-pub trait QueryPacket
+pub trait QueryPacket<'p>
 where
-    PacketCC<Self::Response>: BinRead + 'static,
+    PacketCC<'p, Self::Response>: BinRead + 'static,
 {
     /// The type used for decoding the query response
     type Response: BinRead;
-    fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args<'static>;
+    fn get_response_read_arg(&self) -> <PacketCC<'p, Self::Response> as BinRead>::Args<'static>;
 }
 
 #[derive(Clone)]
@@ -66,7 +65,7 @@ pub struct ReadArgs<T: Clone> {
     args: T,
 }
 
-impl<P, Args> BinRead for PacketCC<P>
+impl<P, Args> BinRead for PacketCC<'_, P>
 where
     for<'a> P: BinRead<Args<'a> = ReadArgs<Args>>,
     Args: Clone,
@@ -82,12 +81,17 @@ where
         let payload = P::read_options(reader, options, ReadArgs { hdr, args })?;
         let mut tail = Vec::new();
         reader.read_to_end(&mut tail)?;
-        Ok(Self { hdr, payload, tail })
+        Ok(Self {
+            hdr,
+            payload,
+            tail,
+            lifetime: PhantomData,
+        })
     }
 }
 
 // BinWrite can't be derived, since not all payloads implement BinWrite.
-impl<'a, P: BinWrite<Args<'a> = ()>> BinWrite for PacketCC<P> {
+impl<'a, P: BinWrite<Args<'a> = ()>> BinWrite for PacketCC<'_, P> {
     type Args<'b> = ();
 
     fn write_options<W: Write + Seek>(
@@ -108,12 +112,13 @@ impl<'a, P: BinWrite<Args<'a> = ()>> BinWrite for PacketCC<P> {
     }
 }
 
-impl<P: BinWrite> PacketCC<P> {
+impl<P: BinWrite> PacketCC<'_, P> {
     pub fn new(payload: P) -> Self {
         Self {
             hdr: PacketCCHeader::new_cmd(),
             payload,
             tail: vec![],
+            lifetime: PhantomData,
         }
     }
 }
@@ -150,7 +155,7 @@ pub struct ParamsReadQuery {
     sdb_id: u32,
 }
 
-impl QueryPacket for ParamsReadQuery {
+impl QueryPacket<'static> for ParamsReadQuery {
     type Response = ParamReadDynResponse;
 
     fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args<'_> {
@@ -183,7 +188,7 @@ pub struct PayloadParamWrite {
     sdb_id: u32,
 }
 
-impl QueryPacket for PayloadParamWrite {
+impl QueryPacket<'static> for PayloadParamWrite {
     type Response = PayloadUnknown;
     fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args<'_> {}
 }
@@ -313,7 +318,7 @@ impl<'sdb> ParamQuerySetBuilder<'sdb> {
         self.0.push(param);
     }
 
-    pub fn create_query_packet(&self) -> PacketCC<ParamsReadQuery> {
+    pub fn create_query_packet(&self) -> PacketCC<'sdb, ParamsReadQuery> {
         let qset = ParamQuerySet(self.0.clone().into());
         let mut p = PacketCC::new(ParamsReadQuery::new(self.1, qset, &self.0));
         p.hdr.one_if_data_poll_maybe = 1;
@@ -335,7 +340,7 @@ pub mod cc_payloads {
     #[bw(big, magic = 0x11u8)]
     pub struct InstrumentVersionQuery;
 
-    impl QueryPacket for InstrumentVersionQuery {
+    impl QueryPacket<'static> for InstrumentVersionQuery {
         type Response = InstrumentVersionResponse;
         fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args<'_> {}
     }
@@ -366,12 +371,12 @@ pub mod cc_payloads {
             }
         }
 
-        pub fn pkt() -> PacketCC<Self> {
+        pub fn pkt() -> PacketCC<'static, Self> {
             PacketCC::new(Self::new())
         }
     }
 
-    impl QueryPacket for SdbVersionQuery {
+    impl QueryPacket<'static> for SdbVersionQuery {
         type Response = SdbVersionResponse;
         fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args<'_> {}
     }
@@ -400,12 +405,12 @@ pub mod cc_payloads {
             }
         }
 
-        pub fn pkt() -> PacketCC<Self> {
+        pub fn pkt() -> PacketCC<'static, Self> {
             PacketCC::new(Self::new())
         }
     }
 
-    impl QueryPacket for SdbDownloadRequest {
+    impl QueryPacket<'static> for SdbDownloadRequest {
         type Response = SdbDownload;
         fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args<'_> {}
     }
@@ -416,12 +421,12 @@ pub mod cc_payloads {
     pub struct SdbDownloadContinue;
 
     impl SdbDownloadContinue {
-        pub fn pkt() -> PacketCC<Self> {
+        pub fn pkt() -> PacketCC<'static, Self> {
             PacketCC::new(Self)
         }
     }
 
-    impl QueryPacket for SdbDownloadContinue {
+    impl QueryPacket<'static> for SdbDownloadContinue {
         type Response = SdbDownload;
         fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args<'_> {}
     }

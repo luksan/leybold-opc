@@ -19,11 +19,11 @@ impl Connection {
         Ok(Self { stream })
     }
 
-    pub fn query<'a, Cmd>(&mut self, pkt: &PacketCC<Cmd>) -> Result<PacketCC<Cmd::Response>>
+    pub fn query<'a, Cmd>(&mut self, pkt: &PacketCC<Cmd>) -> Result<PacketCC<'a, Cmd::Response>>
     where
-        Cmd: QueryPacket + BinWrite<Args<'a> = ()>,
-        PacketCC<Cmd::Response>: BinRead,
-        <PacketCC<<Cmd as QueryPacket>::Response> as BinRead>::Args<'static>: Clone,
+        Cmd: QueryPacket<'a> + BinWrite<Args<'a> = ()>,
+        PacketCC<'a, Cmd::Response>: BinRead,
+        <PacketCC<'a, <Cmd as QueryPacket<'a>>::Response> as BinRead>::Args<'static>: Clone,
     {
         self.send(pkt)?;
         let args = pkt.payload.get_response_read_arg();
@@ -47,9 +47,12 @@ impl Connection {
             .context("Write to TCP stream failed.")
     }
 
-    fn receive_response_args<'a, P, Args>(&mut self, args: Args) -> anyhow::Result<PacketCC<P>>
+    fn receive_response_args<'a, P: 'a, Args>(
+        &mut self,
+        args: Args,
+    ) -> anyhow::Result<PacketCC<'a, P>>
     where
-        PacketCC<P>: BinRead<Args<'a> = Args>,
+        PacketCC<'a, P>: BinRead<Args<'a> = Args>,
         Args: Clone,
     {
         let mut buf = vec![0; 24];
