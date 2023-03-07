@@ -160,7 +160,7 @@ impl Value {
 }
 
 impl BinRead for Value {
-    type Args<'a> = TypeInfo;
+    type Args<'a> = TypeInfo<'a>;
 
     fn read_options<R: Read + Seek>(
         reader: &mut R,

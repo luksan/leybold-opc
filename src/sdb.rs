@@ -40,9 +40,9 @@ pub mod api {
             self.sdb.parameters[self.param].id
         }
 
-        pub fn type_info(&self) -> TypeInfo {
+        pub fn type_info(&self) -> TypeInfo<'_> {
             TypeInfo {
-                sdb: self.sdb.clone(),
+                sdb: self.sdb.as_ref(),
                 descr: self.descr,
             }
         }
@@ -81,13 +81,13 @@ pub mod api {
     }
 
     #[derive(Clone, Debug)]
-    pub struct TypeInfo {
-        sdb: Rc<Sdb>,
+    pub struct TypeInfo<'sdb> {
+        sdb: &'sdb Sdb,
         descr: usize,
     }
 
-    impl TypeInfo {
-        fn new(sdb: Rc<Sdb>, idx: u32) -> Self {
+    impl<'sdb> TypeInfo<'sdb> {
+        fn new(sdb: &'sdb Sdb, idx: u32) -> Self {
             let descr = idx as usize;
             Self { sdb, descr }
         }
@@ -111,7 +111,7 @@ pub mod api {
                 let x = arr.dims[d];
                 dims[d] = (x.1 - x.0 + 1) as usize;
             }
-            Some((Self::new(self.sdb.clone(), arr.type_idx), dims))
+            Some((Self::new(self.sdb, arr.type_idx), dims))
         }
 
         pub fn struct_info(&self) -> Option<Vec<StructMemberInfo>> {
@@ -120,7 +120,7 @@ pub mod api {
                 .map(|m| {
                     Some(StructMemberInfo {
                         name: m.name.try_as_str().ok()?,
-                        type_info: Self::new(self.sdb.clone(), m.type_descr_idx),
+                        type_info: Self::new(self.sdb, m.type_descr_idx),
                     })
                 })
                 .collect::<Option<Vec<_>>>()
@@ -130,7 +130,7 @@ pub mod api {
     #[derive(Clone, Debug)]
     pub struct StructMemberInfo<'a> {
         pub name: &'a str,
-        pub type_info: TypeInfo,
+        pub type_info: TypeInfo<'a>,
     }
 
     pub fn read_sdb_file() -> Result<Rc<Sdb>> {
