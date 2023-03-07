@@ -123,7 +123,10 @@ impl<Param, Value> Deref for RwCmds<Param, Value> {
 }
 
 impl RwCmds<String, String> {
-    pub fn try_to_param_value(&self, sdb: &sdb::Sdb) -> Result<RwCmds<sdb::Parameter, Value>> {
+    pub fn try_to_param_value<'sdb>(
+        &self,
+        sdb: &'sdb sdb::Sdb,
+    ) -> Result<RwCmds<sdb::Parameter<'sdb>, Value>> {
         let inner: Result<Vec<_>> = self
             .0
             .iter()

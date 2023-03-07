@@ -145,7 +145,7 @@ impl<T: AsRef<[u8]>> From<T> for PayloadUnknown {
 #[bw(big, magic = 0x2e00u16)]
 pub struct ParamsReadQuery<'sdb> {
     #[bw(ignore)]
-    query_set: ParamQuerySet,
+    query_set: ParamQuerySet<'sdb>,
 
     #[bw(calc = params.len() as u32)]
     #[br(temp)]
@@ -153,11 +153,10 @@ pub struct ParamsReadQuery<'sdb> {
     #[br(count = param_count)]
     params: Vec<ParamRead>,
     sdb_id: u32,
-    lifetime: PhantomData<&'sdb i32>,
 }
 
 impl<'sdb> QueryPacket<'sdb> for ParamsReadQuery<'sdb> {
-    type Response<'r> = ParamReadDynResponse;
+    type Response<'r> = ParamReadDynResponse<'sdb>;
 
     fn get_response_read_arg(&self) -> <PacketCC<Self::Response<'sdb>> as BinRead>::Args<'sdb> {
         self.query_set.clone()
@@ -165,7 +164,11 @@ impl<'sdb> QueryPacket<'sdb> for ParamsReadQuery<'sdb> {
 }
 
 impl<'sdb> ParamsReadQuery<'sdb> {
-    pub fn new(sdb: &'sdb sdb::Sdb, query_set: ParamQuerySet, params: &[sdb::Parameter]) -> Self {
+    pub fn new(
+        sdb: &'sdb sdb::Sdb,
+        query_set: ParamQuerySet<'sdb>,
+        params: &[sdb::Parameter],
+    ) -> Self {
         let params = params
             .iter()
             .map(|param| ParamRead::new(param.id(), param.type_info().response_len() as u32))
@@ -174,7 +177,6 @@ impl<'sdb> ParamsReadQuery<'sdb> {
             query_set,
             params,
             sdb_id: sdb.sdb_id,
-            lifetime: PhantomData,
         }
     }
 }
@@ -242,16 +244,17 @@ impl ParamRead {
 
 #[binread]
 #[derive(Clone)]
-#[br(big, import_raw(read_args: ReadArgs<ParamQuerySet>))]
-pub struct ParamReadDynResponse {
+#[br(big, import_raw(read_args: ReadArgs<ParamQuerySet<'sdb>>))]
+pub struct ParamReadDynResponse<'sdb> {
     pub error_code: u16,
     #[br(map(|d:u32| Duration::from_millis(d as u64)))]
     pub timestamp: Duration,
     #[br(parse_with = |reader,_,()| parse_dyn_payload(reader, &read_args.args.0))]
     pub data: Vec<Value>,
     #[br(calc = read_args.args)]
-    pub query_set: ParamQuerySet,
+    pub query_set: ParamQuerySet<'sdb>,
 }
+
 fn parse_dyn_payload<R: Read + Seek>(
     reader: &mut R,
     params: &[sdb::Parameter],
@@ -266,9 +269,9 @@ fn parse_dyn_payload<R: Read + Seek>(
         .collect()
 }
 
-impl Debug for ParamReadDynResponse {
+impl Debug for ParamReadDynResponse<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        struct DbgMapHelper<'a>(&'a ParamQuerySet, &'a [Value]);
+        struct DbgMapHelper<'a>(&'a ParamQuerySet<'a>, &'a [Value]);
         impl Debug for DbgMapHelper<'_> {
             fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
                 let mut m = f.debug_map();
@@ -287,8 +290,8 @@ impl Debug for ParamReadDynResponse {
     }
 }
 
-impl ParamReadDynResponse {
-    pub fn into_hashmap(self) -> HashMap<sdb::Parameter, Value> {
+impl<'sdb> ParamReadDynResponse<'sdb> {
+    pub fn into_hashmap(self) -> HashMap<sdb::Parameter<'sdb>, Value> {
         self.query_set
             .0
             .iter()
@@ -303,10 +306,10 @@ impl ParamReadDynResponse {
 }
 
 #[derive(Debug, Clone)]
-pub struct ParamQuerySetBuilder<'sdb>(Vec<sdb::Parameter>, &'sdb sdb::Sdb);
+pub struct ParamQuerySetBuilder<'sdb>(Vec<sdb::Parameter<'sdb>>, &'sdb sdb::Sdb);
 
 #[derive(Debug, Clone)]
-pub struct ParamQuerySet(pub Rc<[sdb::Parameter]>);
+pub struct ParamQuerySet<'sdb>(pub Rc<[sdb::Parameter<'sdb>]>);
 
 impl<'sdb> ParamQuerySetBuilder<'sdb> {
     pub fn new(sdb: &'sdb sdb::Sdb) -> Self {
@@ -316,7 +319,7 @@ impl<'sdb> ParamQuerySetBuilder<'sdb> {
         self.0.push(self.1.param_by_name(name)?);
         Ok(())
     }
-    pub fn add_param(&mut self, param: sdb::Parameter) {
+    pub fn add_param(&mut self, param: sdb::Parameter<'sdb>) {
         self.0.push(param);
     }
 

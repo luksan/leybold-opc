@@ -21,14 +21,14 @@ pub mod api {
     use std::rc::Rc;
 
     #[derive(Clone)]
-    pub struct Parameter {
-        sdb: Rc<Sdb>,
+    pub struct Parameter<'sdb> {
+        sdb: &'sdb Sdb,
         param: usize,
         descr: usize,
     }
 
-    impl Parameter {
-        pub(super) fn new(sdb: Rc<Sdb>, param: usize, descr: usize) -> Self {
+    impl<'sdb> Parameter<'sdb> {
+        pub(super) fn new(sdb: &'sdb Sdb, param: usize, descr: usize) -> Self {
             Self { sdb, param, descr }
         }
 
@@ -42,7 +42,7 @@ pub mod api {
 
         pub fn type_info(&self) -> TypeInfo<'_> {
             TypeInfo {
-                sdb: self.sdb.as_ref(),
+                sdb: self.sdb,
                 descr: self.descr,
             }
         }
@@ -57,24 +57,24 @@ pub mod api {
         }
     }
 
-    impl Hash for Parameter {
+    impl Hash for Parameter<'_> {
         fn hash<H: Hasher>(&self, state: &mut H) {
-            Rc::as_ptr(&self.sdb).hash(state);
+            (&self.sdb as *const _ as u64).hash(state);
             self.param.hash(state);
             self.descr.hash(state);
         }
     }
 
-    impl PartialEq<Self> for Parameter {
+    impl PartialEq<Self> for Parameter<'_> {
         fn eq(&self, other: &Self) -> bool {
             self.param == other.param
                 && self.descr == other.descr
-                && Rc::ptr_eq(&self.sdb, &other.sdb)
+                && core::ptr::eq(&self.sdb, &other.sdb)
         }
     }
-    impl Eq for Parameter {}
+    impl Eq for Parameter<'_> {}
 
-    impl Debug for Parameter {
+    impl Debug for Parameter<'_> {
         fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
             write!(f, "Parameter<{}>", self.name())
         }
@@ -222,13 +222,7 @@ impl Sdb {
             .iter()
             .map(|p| p.type_descr_idx)
             .enumerate()
-            .map(|(param_idx, type_idx)| {
-                Parameter::new(
-                    self.self_ref.upgrade().unwrap(),
-                    param_idx,
-                    type_idx as usize,
-                )
-            })
+            .map(move |(param_idx, type_idx)| Parameter::new(self, param_idx, type_idx as usize))
     }
 
     pub fn param_by_name(&self, name: &str) -> Result<Parameter> {
@@ -242,11 +236,7 @@ impl Sdb {
         if type_idx >= self.type_descr.len() {
             bail!("Invalid type descriptor index for parameter {}.", name)
         }
-        Ok(Parameter::new(
-            self.self_ref.upgrade().unwrap(),
-            param,
-            type_idx,
-        ))
+        Ok(Parameter::new(self, param, type_idx))
     }
 
     fn get_desc(&self, idx: u32) -> Result<&TypeDescription> {
