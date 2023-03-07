@@ -9,7 +9,7 @@ use std::fmt::{Debug, Formatter};
 use std::io::{BufReader, Read, Seek};
 use std::ops::Deref;
 use std::path::Path;
-use std::rc::{Rc, Weak};
+use std::rc::Rc;
 
 pub use api::*;
 
@@ -18,7 +18,6 @@ pub mod api {
     pub use super::{Sdb, TypeKind};
     use crate::opc_values::Value;
     use std::hash::{Hash, Hasher};
-    use std::rc::Rc;
 
     #[derive(Clone)]
     pub struct Parameter<'sdb> {
@@ -142,9 +141,6 @@ pub mod api {
 #[derive(Clone, Debug)]
 #[br(little)]
 pub struct Sdb {
-    #[br(default)]
-    self_ref: Weak<Self>,
-
     #[br(magic = 1u32, temp)]
     hdr_len: u32,
     #[br(magic = 1u32)]
@@ -205,11 +201,8 @@ impl Deref for SdbParams {
 impl Sdb {
     pub fn from_file(file: impl AsRef<Path>) -> Result<Rc<Sdb>> {
         let file = std::fs::File::open(file)?;
-        let mut sdb = Sdb::read(&mut BufReader::new(file)).context("Failed to parse SDB file.")?;
-        Ok(Rc::new_cyclic(|weak| {
-            sdb.self_ref = weak.clone();
-            sdb
-        }))
+        let sdb = Sdb::read(&mut BufReader::new(file)).context("Failed to parse SDB file.")?;
+        Ok(Rc::new(sdb))
     }
 
     pub fn get_ref(&self) -> &Sdb {
