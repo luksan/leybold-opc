@@ -238,7 +238,7 @@ impl Sdb {
             .parameters
             .iter()
             .position(|p| p.name == name)
-            .with_context(|| format!("Parameter name '{}' not found", name))?;
+            .with_context(|| format!("Parameter name '{name}' not found"))?;
 
         let type_idx = self.parameters[param].type_descr_idx as usize;
         if type_idx >= self.type_descr.len() {
@@ -414,7 +414,7 @@ impl Debug for SdbStr {
             let width = width.saturating_sub(s.len() + 2);
             write!(f, "\"{}\"{:width$}", s, "")
         } else {
-            write!(f, "\"{}\"", s)
+            write!(f, "\"{s}\"")
         }
     }
 }
