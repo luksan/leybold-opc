@@ -2,7 +2,7 @@
 
 use anyhow::{bail, Context, Result};
 use arrayvec::ArrayVec;
-use binrw::{binread, BinRead, BinResult, ReadOptions, VecArgs};
+use binrw::{binread, BinRead, BinResult, Endian, VecArgs};
 use rhexdump::hexdump;
 
 use std::fmt::{Debug, Formatter};
@@ -181,17 +181,17 @@ pub type SdbRef = Rc<Sdb>;
 struct SdbParams(Box<[SdbParam]>);
 
 impl BinRead for SdbParams {
-    type Args = (u32,);
+    type Args<'a> = (u32,);
 
     fn read_options<R: Read + Seek>(
         reader: &mut R,
-        options: &ReadOptions,
-        args: Self::Args,
+        endian: Endian,
+        args: Self::Args<'_>,
     ) -> BinResult<Self> {
         let count = args.0 as usize;
         let mut x = Vec::with_capacity(count);
         for _ in 0..count {
-            x.push(SdbParam::read_options(reader, options, ())?);
+            x.push(SdbParam::read_options(reader, endian, ())?);
         }
         Ok(Self(x.into_boxed_slice()))
     }
@@ -319,12 +319,12 @@ enum TypeDescPayload {
 }
 
 impl BinRead for TypeDescPayload {
-    type Args = (TypeKind,);
+    type Args<'a> = (TypeKind,);
 
     fn read_options<R: Read + Seek>(
         reader: &mut R,
-        options: &ReadOptions,
-        args: Self::Args,
+        options: Endian,
+        args: Self::Args<'_>,
     ) -> BinResult<Self> {
         Ok(match args.0 {
             TypeKind::Array => Self::Array(ArrayDesc::read_options(reader, options, ())?),
@@ -385,7 +385,7 @@ type SdbStrStorage = ArrayVec<u8, SDB_STR_MAX_LEN>;
 
 fn parse_arrayvec<R: Read + Seek>(
     reader: &mut R,
-    _opts: &ReadOptions,
+    _endian: Endian,
     args: (u16,),
 ) -> BinResult<SdbStrStorage> {
     assert!(args.0 as usize <= SDB_STR_MAX_LEN);

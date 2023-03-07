@@ -1,7 +1,7 @@
 #![allow(dead_code, clippy::new_without_default)]
 
 use anyhow::{anyhow, Result};
-use binrw::{binread, binrw, binwrite, BinRead, BinResult, BinWrite, ReadOptions, WriteOptions};
+use binrw::{binread, binrw, binwrite, BinRead, BinResult, BinWrite, Endian};
 use rhexdump::hexdump;
 
 use crate::opc_values::{EncodeOpcValue, Value};
@@ -53,11 +53,11 @@ where
 
 pub trait QueryPacket
 where
-    PacketCC<Self::Response>: BinRead,
+    PacketCC<Self::Response>: BinRead + 'static,
 {
     /// The type used for decoding the query response
     type Response: BinRead;
-    fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args;
+    fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args<'static>;
 }
 
 #[derive(Clone)]
@@ -66,13 +66,17 @@ pub struct ReadArgs<T: Clone> {
     args: T,
 }
 
-impl<P: BinRead<Args = ReadArgs<Args>>, Args: Clone> BinRead for PacketCC<P> {
-    type Args = Args;
+impl<P, Args> BinRead for PacketCC<P>
+where
+    for<'a> P: BinRead<Args<'a> = ReadArgs<Args>>,
+    Args: Clone,
+{
+    type Args<'a> = Args;
 
     fn read_options<R: Read + Seek>(
         reader: &mut R,
-        options: &ReadOptions,
-        args: Self::Args,
+        options: Endian,
+        args: Self::Args<'_>,
     ) -> BinResult<Self> {
         let hdr = PacketCCHeader::read_options(reader, options, ())?;
         let payload = P::read_options(reader, options, ReadArgs { hdr, args })?;
@@ -83,14 +87,14 @@ impl<P: BinRead<Args = ReadArgs<Args>>, Args: Clone> BinRead for PacketCC<P> {
 }
 
 // BinWrite can't be derived, since not all payloads implement BinWrite.
-impl<P: BinWrite<Args = ()>> BinWrite for PacketCC<P> {
-    type Args = ();
+impl<'a, P: BinWrite<Args<'a> = ()>> BinWrite for PacketCC<P> {
+    type Args<'b> = ();
 
     fn write_options<W: Write + Seek>(
         &self,
         writer: &mut W,
-        options: &WriteOptions,
-        _args: Self::Args,
+        options: Endian,
+        _args: Self::Args<'_>,
     ) -> BinResult<()> {
         let hdr_start = writer.stream_position()?;
         self.hdr.write_options(writer, options, (0,))?;
@@ -149,7 +153,7 @@ pub struct ParamsReadQuery {
 impl QueryPacket for ParamsReadQuery {
     type Response = ParamReadDynResponse;
 
-    fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args {
+    fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args<'_> {
         self.query_set.clone()
     }
 }
@@ -181,7 +185,7 @@ pub struct PayloadParamWrite {
 
 impl QueryPacket for PayloadParamWrite {
     type Response = PayloadUnknown;
-    fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args {}
+    fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args<'_> {}
 }
 
 impl PayloadParamWrite {
@@ -333,7 +337,7 @@ pub mod cc_payloads {
 
     impl QueryPacket for InstrumentVersionQuery {
         type Response = InstrumentVersionResponse;
-        fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args {}
+        fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args<'_> {}
     }
 
     #[binread]
@@ -369,7 +373,7 @@ pub mod cc_payloads {
 
     impl QueryPacket for SdbVersionQuery {
         type Response = SdbVersionResponse;
-        fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args {}
+        fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args<'_> {}
     }
 
     #[binread]
@@ -403,7 +407,7 @@ pub mod cc_payloads {
 
     impl QueryPacket for SdbDownloadRequest {
         type Response = SdbDownload;
-        fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args {}
+        fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args<'_> {}
     }
 
     #[binwrite]
@@ -419,7 +423,7 @@ pub mod cc_payloads {
 
     impl QueryPacket for SdbDownloadContinue {
         type Response = SdbDownload;
-        fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args {}
+        fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args<'_> {}
     }
 
     #[binread]

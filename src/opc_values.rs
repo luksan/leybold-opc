@@ -3,7 +3,7 @@ use std::io::{Cursor, Read, Seek};
 
 use anyhow::{anyhow, bail, Result};
 use binrw::meta::{EndianKind, ReadEndian};
-use binrw::{BinRead, BinReaderExt, BinResult, Endian, ReadOptions};
+use binrw::{BinRead, BinReaderExt, BinResult, Endian};
 use serde::Serialize;
 use yore::code_pages::CP1252;
 
@@ -160,12 +160,12 @@ impl Value {
 }
 
 impl BinRead for Value {
-    type Args = TypeInfo;
+    type Args<'a> = TypeInfo;
 
     fn read_options<R: Read + Seek>(
         reader: &mut R,
-        _options: &ReadOptions,
-        args: Self::Args,
+        _endian: Endian,
+        args: Self::Args<'_>,
     ) -> BinResult<Self> {
         let mut buf = vec![0; args.response_len()];
         reader.read_exact(buf.as_mut_slice())?;
