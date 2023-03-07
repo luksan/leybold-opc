@@ -296,13 +296,13 @@ impl ParamReadDynResponse {
 }
 
 #[derive(Debug, Clone)]
-pub struct ParamQuerySetBuilder(Vec<sdb::Parameter>, sdb::SdbRef);
+pub struct ParamQuerySetBuilder<'sdb>(Vec<sdb::Parameter>, &'sdb sdb::Sdb);
 
 #[derive(Debug, Clone)]
 pub struct ParamQuerySet(pub Rc<[sdb::Parameter]>);
 
-impl ParamQuerySetBuilder {
-    pub fn new(sdb: &sdb::Sdb) -> Self {
+impl<'sdb> ParamQuerySetBuilder<'sdb> {
+    pub fn new(sdb: &'sdb sdb::Sdb) -> Self {
         Self(vec![], sdb.get_ref())
     }
     pub fn add(&mut self, name: &str) -> Result<()> {
@@ -315,7 +315,7 @@ impl ParamQuerySetBuilder {
 
     pub fn create_query_packet(&self) -> PacketCC<ParamsReadQuery> {
         let qset = ParamQuerySet(self.0.clone().into());
-        let mut p = PacketCC::new(ParamsReadQuery::new(&self.1, qset, &self.0));
+        let mut p = PacketCC::new(ParamsReadQuery::new(self.1, qset, &self.0));
         p.hdr.one_if_data_poll_maybe = 1;
         p
     }

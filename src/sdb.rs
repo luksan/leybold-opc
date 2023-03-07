@@ -175,8 +175,6 @@ pub struct Sdb {
     tail: Vec<u8>,
 }
 
-pub type SdbRef = Rc<Sdb>;
-
 #[derive(Clone, Debug)]
 struct SdbParams(Box<[SdbParam]>);
 
@@ -205,7 +203,7 @@ impl Deref for SdbParams {
 }
 
 impl Sdb {
-    pub fn from_file(file: impl AsRef<Path>) -> Result<SdbRef> {
+    pub fn from_file(file: impl AsRef<Path>) -> Result<Rc<Sdb>> {
         let file = std::fs::File::open(file)?;
         let mut sdb = Sdb::read(&mut BufReader::new(file)).context("Failed to parse SDB file.")?;
         Ok(Rc::new_cyclic(|weak| {
@@ -214,8 +212,8 @@ impl Sdb {
         }))
     }
 
-    pub fn get_ref(&self) -> SdbRef {
-        self.self_ref.upgrade().unwrap()
+    pub fn get_ref(&self) -> &Sdb {
+        self
     }
 
     /// Returns an iterator over all the parameters in the SDB.
