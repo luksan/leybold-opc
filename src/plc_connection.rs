@@ -23,7 +23,7 @@ impl Connection {
     where
         Cmd: QueryPacket<'a> + BinWrite<Args<'a> = ()>,
         PacketCC<'a, Cmd::Response<'a>>: BinRead,
-        <PacketCC<'a, <Cmd as QueryPacket<'a>>::Response<'a>> as BinRead>::Args<'static>: Clone,
+        <PacketCC<'a, <Cmd as QueryPacket<'a>>::Response<'a>> as BinRead>::Args<'a>: Clone,
     {
         self.send(pkt)?;
         let args = pkt.payload.get_response_read_arg();

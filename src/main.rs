@@ -327,11 +327,11 @@ fn execute_queries(
         // perform read query
         if !query_builder.is_empty() {
             let packet = query_builder.create_query_packet();
-            query_builder = ParamQuerySetBuilder::new(sdb);
             let r = conn.query(&packet)?;
             for (param, value) in r.payload.iter() {
                 println!("{}: {value:?}", param.name());
             }
+            query_builder = ParamQuerySetBuilder::new(sdb);
         }
 
         if CTRL_C_PRESSED.load(SeqCst) {

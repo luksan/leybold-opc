@@ -52,12 +52,11 @@ pub struct PacketCC<'p, Payload: 'p> {
 
 pub trait QueryPacket<'p>
 where
-    PacketCC<'p, Self::Response<'p>>: BinRead + 'static,
+    PacketCC<'p, Self::Response<'p>>: BinRead + 'p,
 {
     /// The type used for decoding the query response
     type Response<'r>: BinRead;
-    fn get_response_read_arg(&self)
-        -> <PacketCC<'p, Self::Response<'p>> as BinRead>::Args<'static>;
+    fn get_response_read_arg(&self) -> <PacketCC<'p, Self::Response<'p>> as BinRead>::Args<'p>;
 }
 
 #[derive(Clone)]
@@ -144,7 +143,7 @@ impl<T: AsRef<[u8]>> From<T> for PayloadUnknown {
 #[binwrite]
 #[derive(Clone, Debug)]
 #[bw(big, magic = 0x2e00u16)]
-pub struct ParamsReadQuery {
+pub struct ParamsReadQuery<'sdb> {
     #[bw(ignore)]
     query_set: ParamQuerySet,
 
@@ -154,18 +153,19 @@ pub struct ParamsReadQuery {
     #[br(count = param_count)]
     params: Vec<ParamRead>,
     sdb_id: u32,
+    lifetime: PhantomData<&'sdb i32>,
 }
 
-impl QueryPacket<'static> for ParamsReadQuery {
+impl<'sdb> QueryPacket<'sdb> for ParamsReadQuery<'sdb> {
     type Response<'r> = ParamReadDynResponse;
 
-    fn get_response_read_arg(&self) -> <PacketCC<Self::Response<'_>> as BinRead>::Args<'_> {
+    fn get_response_read_arg(&self) -> <PacketCC<Self::Response<'sdb>> as BinRead>::Args<'sdb> {
         self.query_set.clone()
     }
 }
 
-impl ParamsReadQuery {
-    pub fn new(sdb: &sdb::Sdb, query_set: ParamQuerySet, params: &[sdb::Parameter]) -> Self {
+impl<'sdb> ParamsReadQuery<'sdb> {
+    pub fn new(sdb: &'sdb sdb::Sdb, query_set: ParamQuerySet, params: &[sdb::Parameter]) -> Self {
         let params = params
             .iter()
             .map(|param| ParamRead::new(param.id(), param.type_info().response_len() as u32))
@@ -174,6 +174,7 @@ impl ParamsReadQuery {
             query_set,
             params,
             sdb_id: sdb.sdb_id,
+            lifetime: PhantomData,
         }
     }
 }
