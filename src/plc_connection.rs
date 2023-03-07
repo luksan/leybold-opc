@@ -19,11 +19,11 @@ impl Connection {
         Ok(Self { stream })
     }
 
-    pub fn query<'a, Cmd>(&mut self, pkt: &PacketCC<Cmd>) -> Result<PacketCC<'a, Cmd::Response>>
+    pub fn query<'a, Cmd>(&mut self, pkt: &PacketCC<Cmd>) -> Result<PacketCC<'a, Cmd::Response<'a>>>
     where
         Cmd: QueryPacket<'a> + BinWrite<Args<'a> = ()>,
-        PacketCC<'a, Cmd::Response>: BinRead,
-        <PacketCC<'a, <Cmd as QueryPacket<'a>>::Response> as BinRead>::Args<'static>: Clone,
+        PacketCC<'a, Cmd::Response<'a>>: BinRead,
+        <PacketCC<'a, <Cmd as QueryPacket<'a>>::Response<'a>> as BinRead>::Args<'static>: Clone,
     {
         self.send(pkt)?;
         let args = pkt.payload.get_response_read_arg();

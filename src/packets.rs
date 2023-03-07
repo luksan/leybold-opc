@@ -52,11 +52,12 @@ pub struct PacketCC<'p, Payload: 'p> {
 
 pub trait QueryPacket<'p>
 where
-    PacketCC<'p, Self::Response>: BinRead + 'static,
+    PacketCC<'p, Self::Response<'p>>: BinRead + 'static,
 {
     /// The type used for decoding the query response
-    type Response: BinRead;
-    fn get_response_read_arg(&self) -> <PacketCC<'p, Self::Response> as BinRead>::Args<'static>;
+    type Response<'r>: BinRead;
+    fn get_response_read_arg(&self)
+        -> <PacketCC<'p, Self::Response<'p>> as BinRead>::Args<'static>;
 }
 
 #[derive(Clone)]
@@ -156,9 +157,9 @@ pub struct ParamsReadQuery {
 }
 
 impl QueryPacket<'static> for ParamsReadQuery {
-    type Response = ParamReadDynResponse;
+    type Response<'r> = ParamReadDynResponse;
 
-    fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args<'_> {
+    fn get_response_read_arg(&self) -> <PacketCC<Self::Response<'_>> as BinRead>::Args<'_> {
         self.query_set.clone()
     }
 }
@@ -189,8 +190,8 @@ pub struct PayloadParamWrite {
 }
 
 impl QueryPacket<'static> for PayloadParamWrite {
-    type Response = PayloadUnknown;
-    fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args<'_> {}
+    type Response<'p> = PayloadUnknown;
+    fn get_response_read_arg(&self) -> <PacketCC<Self::Response<'_>> as BinRead>::Args<'_> {}
 }
 
 impl PayloadParamWrite {
@@ -341,8 +342,8 @@ pub mod cc_payloads {
     pub struct InstrumentVersionQuery;
 
     impl QueryPacket<'static> for InstrumentVersionQuery {
-        type Response = InstrumentVersionResponse;
-        fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args<'_> {}
+        type Response<'p> = InstrumentVersionResponse;
+        fn get_response_read_arg(&self) -> <PacketCC<Self::Response<'_>> as BinRead>::Args<'_> {}
     }
 
     #[binread]
@@ -377,8 +378,8 @@ pub mod cc_payloads {
     }
 
     impl QueryPacket<'static> for SdbVersionQuery {
-        type Response = SdbVersionResponse;
-        fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args<'_> {}
+        type Response<'p> = SdbVersionResponse;
+        fn get_response_read_arg(&self) -> <PacketCC<Self::Response<'_>> as BinRead>::Args<'_> {}
     }
 
     #[binread]
@@ -411,8 +412,8 @@ pub mod cc_payloads {
     }
 
     impl QueryPacket<'static> for SdbDownloadRequest {
-        type Response = SdbDownload;
-        fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args<'_> {}
+        type Response<'p> = SdbDownload;
+        fn get_response_read_arg(&self) -> <PacketCC<Self::Response<'_>> as BinRead>::Args<'_> {}
     }
 
     #[binwrite]
@@ -427,8 +428,8 @@ pub mod cc_payloads {
     }
 
     impl QueryPacket<'static> for SdbDownloadContinue {
-        type Response = SdbDownload;
-        fn get_response_read_arg(&self) -> <PacketCC<Self::Response> as BinRead>::Args<'_> {}
+        type Response<'p> = SdbDownload;
+        fn get_response_read_arg(&self) -> <PacketCC<Self::Response<'_>> as BinRead>::Args<'_> {}
     }
 
     #[binread]
