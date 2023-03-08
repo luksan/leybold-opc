@@ -199,8 +199,12 @@ impl Deref for SdbParams {
 
 impl Sdb {
     pub fn from_file(file: impl AsRef<Path>) -> Result<Rc<Sdb>> {
-        let file = std::fs::File::open(file)?;
-        let sdb = Sdb::read(&mut BufReader::new(file)).context("Failed to parse SDB file.")?;
+        let mut file = std::fs::File::open(file)?;
+
+        let mut reader = std::io::Cursor::new(Vec::new());
+        file.read_to_end(reader.get_mut())?;
+
+        let sdb = Sdb::read(&mut reader).context("Failed to parse SDB file.")?;
         Ok(Rc::new(sdb))
     }
 
