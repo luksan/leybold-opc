@@ -242,7 +242,8 @@ fn cmd_read_all(conn: &mut Connection) -> Result<()> {
 }
 
 fn test_cmd(connect: impl FnOnce() -> Result<Connection>) -> Result<()> {
-    let _conn = &mut connect()?;
+    // let _conn = &mut connect()?;
+    sdb::read_sdb_file()?;
 
     // let pkt = PacketCC::new(SdbVersionQuery::new());
     // let r = conn.query(&pkt)?;

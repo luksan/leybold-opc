@@ -197,12 +197,39 @@ impl Deref for SdbParams {
     }
 }
 
+mod seek {
+    use std::io::{Cursor, Read, Seek, SeekFrom};
+
+    pub struct SeekCheck {
+        inner: std::io::Cursor<Vec<u8>>,
+    }
+
+    impl SeekCheck {
+        pub fn new(inner: Cursor<Vec<u8>>) -> Self {
+            Self { inner }
+        }
+    }
+
+    impl Seek for SeekCheck {
+        fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+            self.inner.seek(pos)
+        }
+    }
+
+    impl Read for SeekCheck {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            self.inner.read(buf)
+        }
+    }
+}
+
 impl Sdb {
     pub fn from_file(file: impl AsRef<Path>) -> Result<Rc<Sdb>> {
         let mut file = std::fs::File::open(file)?;
 
         let mut reader = std::io::Cursor::new(Vec::new());
         file.read_to_end(reader.get_mut())?;
+        let mut reader = seek::SeekCheck::new(reader);
 
         let sdb = Sdb::read(&mut reader).context("Failed to parse SDB file.")?;
         Ok(Rc::new(sdb))
