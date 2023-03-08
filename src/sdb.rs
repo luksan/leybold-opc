@@ -1,12 +1,11 @@
 #![allow(dead_code)]
 
 use anyhow::{bail, Context, Result};
-use arrayvec::ArrayVec;
 use binrw::{binread, BinRead, BinResult, Endian, VecArgs};
 use rhexdump::hexdump;
 
 use std::fmt::{Debug, Formatter};
-use std::io::{BufReader, Read, Seek};
+use std::io::{BufReader, ErrorKind, Read, Seek};
 use std::ops::Deref;
 use std::path::Path;
 use std::rc::Rc;
@@ -32,7 +31,7 @@ pub mod api {
         }
 
         pub fn name(&self) -> &str {
-            self.sdb.parameters[self.param].name.try_as_str().unwrap()
+            self.sdb.parameters[self.param].name.as_str()
         }
 
         pub fn id(&self) -> u32 {
@@ -118,7 +117,7 @@ pub mod api {
             v.iter()
                 .map(|m| {
                     Some(StructMemberInfo {
-                        name: m.name.try_as_str().ok()?,
+                        name: m.name.as_str(),
                         type_info: Self::new(self.sdb, m.type_descr_idx),
                     })
                 })
@@ -358,39 +357,41 @@ impl Debug for SdbParam {
 struct SdbStr {
     #[br(temp)]
     len: u16,
-    #[br(args(len), parse_with = parse_arrayvec)]
+    #[br(args(len), parse_with = parse_sdbstr)]
     s: SdbStrStorage,
 }
 const SDB_STR_MAX_LEN: usize = 81;
-type SdbStrStorage = ArrayVec<u8, SDB_STR_MAX_LEN>;
+type SdbStrStorage = compact_str::CompactString;
 
-fn parse_arrayvec<R: Read + Seek>(
+fn parse_sdbstr<R: Read + Seek>(
     reader: &mut R,
     _endian: Endian,
     args: (u16,),
 ) -> BinResult<SdbStrStorage> {
     assert!(args.0 as usize <= SDB_STR_MAX_LEN);
-    let len = args.0 as usize;
-    let mut x = SdbStrStorage::from([0; SDB_STR_MAX_LEN]);
-    x.truncate(len);
-    reader.read_exact(&mut x)?;
+    let mut len = args.0 as usize;
+    let mut buffer = [0u8; SDB_STR_MAX_LEN];
+    reader.read_exact(&mut buffer[..len])?;
     // "len" includes 0 to 3 bytes of NUL padding
-    while Some(&0) == x.last() {
-        x.pop();
+    for _ in 0..3 {
+        if buffer[len - 1] != 0 {
+            break;
+        }
+        len -= 1;
     }
-    Ok(x)
+    SdbStrStorage::from_utf8(&buffer[..len])
+        .map_err(|e| binrw::io::Error::new(ErrorKind::InvalidData, e).into())
 }
 
 impl SdbStr {
-    pub fn try_as_str(&self) -> Result<&str> {
-        std::str::from_utf8(self.s.as_slice())
-            .with_context(|| format!("SdbStr is not valid utf-8: {:?}", self.s))
+    pub fn as_str(&self) -> &str {
+        self.s.as_str()
     }
 }
 
 impl Debug for SdbStr {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let s = std::str::from_utf8(self.s.as_slice()).unwrap();
+        let s: &str = self.as_str();
         if let Some(width) = f.width() {
             let width = width.saturating_sub(s.len() + 2);
             write!(f, "\"{}\"{:width$}", s, "")
@@ -402,7 +403,7 @@ impl Debug for SdbStr {
 
 impl PartialEq<&str> for SdbStr {
     fn eq(&self, other: &&str) -> bool {
-        self.try_as_str().ok().map(|s| s == *other).unwrap_or(false)
+        self.as_str() == *other
     }
 }
 
@@ -424,7 +425,7 @@ pub fn print_sdb_file() -> Result<()> {
 
     for p in &*sdb.parameters {
         let descr = sdb.get_desc(p.type_descr_idx).expect("Invalid type idx.");
-        let name = p.name.try_as_str().expect("Name not valid utf-8");
+        let name = p.name.as_str();
         let kind = format!("{:?}~{}", descr.kind, descr.read_len());
         if descr.kind != TypeKind::Pointer {
             //    continue;
@@ -470,11 +471,6 @@ struct StructMember {
 
 impl Debug for StructMember {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{} type: {}",
-            self.name.try_as_str().unwrap(),
-            self.type_descr_idx
-        )
+        write!(f, "{} type: {}", self.name.as_str(), self.type_descr_idx)
     }
 }
