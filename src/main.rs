@@ -30,7 +30,7 @@ fn poll_pressure(conn: &mut Connection) -> Result<()> {
     let mut last_timestamp = 0.0;
     let mut last_time = std::time::Instant::now();
 
-    let pkt = param_set.create_query_packet();
+    let pkt = param_set.into_query_packet();
     loop {
         let r = conn.query(&pkt)?;
         let now = std::time::Instant::now();
@@ -53,7 +53,7 @@ fn read_dyn_params(conn: &mut Connection) -> Result<()> {
     // param_set.add_param(sdb.param_by_name(".Gauge[1].Parameter[1].Value")?);
     // param_set.add_param(sdb.param_by_name(".Gauge[1].Parameter[1].StringValue")?);
 
-    let r = conn.query(&param_set.create_query_packet())?;
+    let r = conn.query(&param_set.into_query_packet())?;
 
     let resp_values = &r.payload.data;
     let param_set = &r.payload.query_set.0;
@@ -226,7 +226,7 @@ fn cmd_read_all(conn: &mut Connection) -> Result<()> {
             continue;
         }
 
-        let r = conn.query(&params.create_query_packet())?;
+        let r = conn.query(&params.into_query_packet())?;
 
         for (param, value) in r.payload.iter() {
             json_map.serialize_key(param.name())?;
@@ -329,7 +329,7 @@ fn execute_queries(
         }
         // perform read query
         if !query_builder.is_empty() {
-            let packet = query_builder.create_query_packet();
+            let packet = query_builder.into_query_packet();
             let r = conn.query(&packet)?;
             for (param, value) in r.payload.iter() {
                 println!("{}: {value:?}", param.name());

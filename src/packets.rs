@@ -164,12 +164,9 @@ impl<'sdb> QueryPacket<'sdb> for ParamsReadQuery<'sdb> {
 }
 
 impl<'sdb> ParamsReadQuery<'sdb> {
-    pub fn new(
-        sdb: &'sdb sdb::Sdb,
-        query_set: ParamQuerySet<'sdb>,
-        params: &[sdb::Parameter],
-    ) -> Self {
-        let params = params
+    pub fn new(sdb: &'sdb sdb::Sdb, query_set: ParamQuerySet<'sdb>) -> Self {
+        let params = query_set
+            .0
             .iter()
             .map(|param| ParamRead::new(param.id(), param.type_info().response_len() as u32))
             .collect();
@@ -309,6 +306,7 @@ impl<'sdb> ParamReadDynResponse<'sdb> {
 pub struct ParamQuerySetBuilder<'sdb>(Vec<sdb::Parameter<'sdb>>, &'sdb sdb::Sdb);
 
 #[derive(Debug, Clone)]
+// Use Rc instead of Box, since Clone is required
 pub struct ParamQuerySet<'sdb>(pub Rc<[sdb::Parameter<'sdb>]>);
 
 impl<'sdb> ParamQuerySetBuilder<'sdb> {
@@ -323,9 +321,8 @@ impl<'sdb> ParamQuerySetBuilder<'sdb> {
         self.0.push(param);
     }
 
-    pub fn create_query_packet(&self) -> PacketCC<'sdb, ParamsReadQuery> {
-        let qset = ParamQuerySet(self.0.clone().into());
-        let mut p = PacketCC::new(ParamsReadQuery::new(self.1, qset, &self.0));
+    pub fn into_query_packet(self) -> PacketCC<'sdb, ParamsReadQuery<'sdb>> {
+        let mut p = PacketCC::new(ParamsReadQuery::new(self.1, ParamQuerySet(self.0.into())));
         p.hdr.one_if_data_poll_maybe = 1;
         p
     }
