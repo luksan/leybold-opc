@@ -3,7 +3,16 @@
 This is a utility for monitoring (and controlling (TODO)) the Leybold Vacvision
 vacuum system controller, used in the OTT and the sky room.
 
+
+## Building and running
+
+Make sure you have a (stable) rust toolchain installed. Then run `cargo run --release -- --help` in the project
+folder to get usage instructions.
+
 ## Usage
+
+Before any values can be read from the instrument the OPC database hase to be downloaded. This can take a few minutes,
+but it will be cached locally after the first download.
 
 ## Notes about the implementation
 
