@@ -198,27 +198,44 @@ impl Deref for SdbParams {
 }
 
 mod seek {
-    use std::io::{Cursor, Read, Seek, SeekFrom};
+    use std::io::{Read, Seek, SeekFrom};
 
-    pub struct SeekCheck {
-        inner: std::io::Cursor<Vec<u8>>,
+    pub struct SeekCheck<T> {
+        inner: T,
+        pos: u64,
     }
 
-    impl SeekCheck {
-        pub fn new(inner: Cursor<Vec<u8>>) -> Self {
-            Self { inner }
+    impl<T> SeekCheck<T> {
+        pub fn new(inner: T) -> Self {
+            Self { inner, pos: 0 }
         }
     }
 
-    impl Seek for SeekCheck {
+    impl<T: Seek> Seek for SeekCheck<T> {
         fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
-            self.inner.seek(pos)
+            if pos == SeekFrom::Current(0) || pos == SeekFrom::Start(self.pos) {
+                return Ok(self.pos);
+            }
+            /*
+            let current = self.inner.stream_position()?;
+            if pos == SeekFrom::Start(current) {
+                println!("Seeking to current position {pos:?}");
+            }*/
+            self.pos = self.inner.seek(pos)?;
+            Ok(self.pos)
+        }
+
+        fn stream_position(&mut self) -> std::io::Result<u64> {
+            Ok(self.pos)
+            // self.inner.stream_position()
         }
     }
 
-    impl Read for SeekCheck {
+    impl<T: Read> Read for SeekCheck<T> {
         fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-            self.inner.read(buf)
+            let len = self.inner.read(buf)?;
+            self.pos += len as u64;
+            Ok(len)
         }
     }
 }
@@ -227,8 +244,9 @@ impl Sdb {
     pub fn from_file(file: impl AsRef<Path>) -> Result<Rc<Sdb>> {
         let mut file = std::fs::File::open(file)?;
 
-        let mut reader = std::io::Cursor::new(Vec::new());
-        file.read_to_end(reader.get_mut())?;
+        let mut reader = BufReader::new(file);
+        //let mut reader = std::io::Cursor::new(Vec::new());
+        //file.read_to_end(reader.get_mut())?;
         let mut reader = seek::SeekCheck::new(reader);
 
         let sdb = Sdb::read(&mut reader).context("Failed to parse SDB file.")?;
