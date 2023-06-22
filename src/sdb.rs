@@ -5,7 +5,7 @@ use binrw::{binread, BinRead, BinResult, Endian, VecArgs};
 use rhexdump::hexdump;
 
 use std::fmt::{Debug, Formatter};
-use std::io::{BufReader, ErrorKind, Read, Seek};
+use std::io::{ErrorKind, Read, Seek};
 use std::ops::Deref;
 use std::path::Path;
 use std::rc::Rc;
