@@ -255,6 +255,11 @@ fn test_cmd(connect: impl FnOnce() -> Result<Connection>) -> Result<()> {
 }
 
 fn main() -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::TRACE)
+        .with_target(false)
+        .init();
+
     let args: CmdlineArgs = Parser::parse();
 
     let connect = || {

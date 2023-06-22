@@ -1,12 +1,13 @@
-use crate::packets::cc_payloads::*;
-use crate::packets::{PacketCC, PacketCCHeader, QueryPacket};
-
-use anyhow::{bail, Context, Result};
-use binrw::{BinRead, BinReaderExt, BinWrite};
-
 use std::io::{Cursor, Read, Write};
 use std::net::{IpAddr, TcpStream};
 use std::time::Duration;
+
+use anyhow::{bail, Context, Result};
+use binrw::{BinRead, BinReaderExt, BinWrite};
+use tracing::debug;
+
+use crate::packets::cc_payloads::*;
+use crate::packets::{PacketCC, PacketCCHeader, QueryPacket};
 
 pub struct Connection {
     stream: TcpStream,
@@ -14,7 +15,9 @@ pub struct Connection {
 
 impl Connection {
     pub fn connect(ip: IpAddr) -> anyhow::Result<Self> {
-        let stream = TcpStream::connect((ip, 1202)).context("Failed to connect to PLC")?;
+        debug!("Connecting to PLC at {}:1202", ip);
+        let stream = TcpStream::connect_timeout(&(ip, 1202).into(), Duration::from_secs(1))
+            .context("Failed to connect to PLC")?;
         stream.set_read_timeout(Some(Duration::from_secs(2)))?;
         Ok(Self { stream })
     }
