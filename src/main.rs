@@ -215,27 +215,30 @@ static CTRL_C_PRESSED: AtomicBool = AtomicBool::new(false);
 
 fn cmd_read_all(conn: &mut Connection) -> Result<()> {
     let sdb = sdb::read_sdb_file()?;
-    let mut params = ParamQuerySetBuilder::new(&sdb);
-    let mut tot_response_len = 0;
     let mut serializer = serde_json::Serializer::pretty(std::io::stdout());
     let mut json_map = serializer.serialize_map(None)?;
-    for param in sdb.parameters() {
-        tot_response_len += param.type_info().response_len();
-        params.add_param(param);
-        if tot_response_len < 0x300 {
-            continue;
-        }
 
-        let r = conn.query(&params.into_query_packet())?;
+    let mut param_iter = sdb.parameters();
+    loop {
+        let mut query_set = ParamQuerySetBuilder::new(&sdb);
+        let mut response_len = 0;
+        while let Some(param) = param_iter.next() {
+            response_len += param.type_info().response_len();
+            query_set.add_param(param);
+            if response_len >= 0x300 {
+                break;
+            }
+        }
+        if query_set.is_empty() {
+            break;
+        }
+        let r = conn.query(&query_set.into_query_packet())?;
 
         for (param, value) in r.payload.iter() {
-            json_map.serialize_key(param.name())?;
-            json_map.serialize_value(value)?;
+            json_map.serialize_entry(param.name(), value)?;
         }
-
-        params = ParamQuerySetBuilder::new(&sdb);
-        tot_response_len = 0;
     }
+
     SerializeMap::end(json_map)?;
     println!(); // newline after json output
     Ok(())
