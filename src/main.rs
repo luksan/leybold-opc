@@ -13,6 +13,7 @@ use leybold_opc_rs::packets::{PacketCC, ParamQuerySetBuilder, ParamWrite, Payloa
 use leybold_opc_rs::plc_connection::{self, Connection};
 use leybold_opc_rs::sdb;
 
+use chrono::{DateTime, Utc};
 use std::net::IpAddr;
 use std::ops::Deref;
 use std::sync::atomic::AtomicBool;
@@ -27,22 +28,17 @@ fn poll_pressure(conn: &mut Connection) -> Result<()> {
     let mut param_set = ParamQuerySetBuilder::new(&sdb);
     param_set.add(".Gauge[1].Parameter[1].Value")?;
 
-    let mut last_timestamp = 0.0;
-    let mut last_time = std::time::Instant::now();
-
     let pkt = param_set.into_query_packet();
     loop {
+        let pre_query_time = std::time::Instant::now();
         let r = conn.query(&pkt)?;
-        let now = std::time::Instant::now();
-        println!(
-            "time delta {:.2} == {:.2} ms",
-            (r.payload.timestamp.as_secs_f64() - last_timestamp) * 1000.0,
-            now.duration_since(last_time).as_secs_f32() * 1000.0
-        );
-        last_time = now;
-        last_timestamp = r.payload.timestamp.as_secs_f64();
         let response = &r.payload.data;
-        println!("Pressure {response:x?} mbar.");
+        let datetime = DateTime::<Utc>::from(std::time::SystemTime::now());
+        println!("{}, {:?} mbar", datetime, response[0]);
+        std::thread::sleep(
+            std::time::Duration::from_secs(1)
+                - std::time::Instant::now().duration_since(pre_query_time),
+        );
     }
 }
 
