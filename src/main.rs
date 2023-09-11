@@ -1,6 +1,12 @@
 #![allow(dead_code, unused_mut)]
 
-use anyhow::{Context, Result};
+use std::net::IpAddr;
+use std::ops::Deref;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering::SeqCst;
+
+use anyhow::{bail, Context, Result};
+use chrono::{DateTime, Utc};
 use clap::{
     error::ErrorKind as ClapError, Arg, ArgAction, ArgMatches, Args, Command, CommandFactory,
     FromArgMatches, Parser, Subcommand,
@@ -12,12 +18,6 @@ use leybold_opc_rs::opc_values::Value;
 use leybold_opc_rs::packets::{PacketCC, ParamQuerySetBuilder, ParamWrite, PayloadParamWrite};
 use leybold_opc_rs::plc_connection::{self, Connection};
 use leybold_opc_rs::sdb;
-
-use chrono::{DateTime, Utc};
-use std::net::IpAddr;
-use std::ops::Deref;
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering::SeqCst;
 
 fn hex<H: Deref<Target = [u8]>>(hex: &H) {
     println!("{}", hexdump(hex.as_ref()));
@@ -34,7 +34,10 @@ fn poll_pressure(conn: &mut Connection) -> Result<()> {
         let r = conn.query(&pkt)?;
         let response = &r.payload.data;
         let datetime = DateTime::<Utc>::from(std::time::SystemTime::now());
-        println!("{}, {:?} mbar", datetime, response[0]);
+        let Value::Float(pressure) = response[0] else {
+            bail!("Pressure parameter isn't a float.")
+        };
+        println!("{datetime}, {pressure:.2e} mbar");
         std::thread::sleep(
             std::time::Duration::from_secs(1)
                 - std::time::Instant::now().duration_since(pre_query_time),
